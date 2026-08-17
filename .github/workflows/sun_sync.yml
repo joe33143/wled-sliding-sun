@@ -1,0 +1,35 @@
+name: 8x64 Sliding Sun Engine
+
+on:
+  schedule:
+    # Runs every 10 minutes
+    - cron: "*/10 * * * *"
+  workflow_dispatch: 
+    # Allows manual triggering from the GitHub UI
+
+jobs:
+  update-matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+          
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          
+      - name: Run Sky Engine Script
+        env:
+          METEOSOURCE_API_KEY: ${{ secrets.METEOSOURCE_API_KEY }}
+          MQTT_BROKER: ${{ secrets.MQTT_BROKER }}
+          MQTT_PORT: ${{ secrets.MQTT_PORT }}
+          MQTT_USER: ${{ secrets.MQTT_USER }}
+          MQTT_PASS: ${{ secrets.MQTT_PASS }}
+          WLED_MQTT_TOPIC: ${{ secrets.WLED_MQTT_TOPIC }}
+        run: python main.py
