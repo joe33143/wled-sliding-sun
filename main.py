@@ -13,7 +13,7 @@ MQTT_BROKER = os.environ.get("MQTT_BROKER")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", 1883))
 MQTT_USER = os.environ.get("MQTT_USER")
 MQTT_PASS = os.environ.get("MQTT_PASS")
-WLED_MQTT_TOPIC = os.environ.get("WLED_MQTT_TOPIC") # e.g., "wled/matrix/api"
+WLED_MQTT_TOPIC = "wled/matrix/api"
 
 LATITUDE = 25.3176
 LONGITUDE = 82.9739
