@@ -62,7 +62,7 @@ def run_sky_engine():
       "seg": [
         {
           "id": 0,             
-          "fx": "Sliding Sun", 
+          "fx": "142", 
           "sx": target_x,      
           "col": [
             target_color,      
