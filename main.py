@@ -78,18 +78,28 @@ def run_sky_engine():
     try:
         client = mqtt.Client()
         
-        # Only set credentials if they actually exist in the GitHub Secrets
         if MQTT_USER and MQTT_PASS:
             client.username_pw_set(MQTT_USER, MQTT_PASS)
             
-        # HiveMQ Cloud requires TLS/SSL on port 8883
         if MQTT_PORT == 8883:
             client.tls_set() 
         
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
-        client.publish(WLED_MQTT_TOPIC, json.dumps(payload))
+        
+        # Start the background network thread
+        client.loop_start()
+        
+        # Publish with Quality of Service 1 (requires broker receipt confirmation)
+        msg = client.publish(WLED_MQTT_TOPIC, json.dumps(payload), qos=1)
+        
+        # STOP and WAIT until the broker confirms receipt
+        msg.wait_for_publish() 
+        
+        # Now it is safe to shut down
+        client.loop_stop()
         client.disconnect()
-        print("Successfully published payload to HiveMQ Broker.")
+        
+        print("Successfully published AND confirmed payload receipt with HiveMQ Broker.")
     except Exception as e:
         print(f"MQTT Publish Failed: {e}")
 
