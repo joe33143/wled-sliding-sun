@@ -1,14 +1,18 @@
 import os
 import time
 import json
-import math
 import requests
 import datetime
+import math
 import paho.mqtt.client as mqtt
 from astral import LocationInfo
 from astral.sun import sun
 import ephem
 import pytz
+
+# Import our new modular effect engines
+import day_effects
+import night_effects
 
 # --- GLOBALS & CONFIG ---
 METEOSOURCE_API_KEY = os.getenv("METEOSOURCE_API_KEY")
@@ -20,89 +24,33 @@ LON = 83.0062
 TIMEZONE = "Asia/Kolkata"
 
 # --- HELPER FUNCTIONS ---
-def lerp(a, b, t):
-    return a + (b - a) * t
-
-def calculate_sun_position(now, sunrise, sunset):
-    if now < sunrise: return 0    
-    if now > sunset: return 255   
-    day_duration = (sunset - sunrise).total_seconds()
-    time_elapsed = (now - sunrise).total_seconds()
-    return int((time_elapsed / day_duration) * 255)
-
-def get_solar_altitude():
-    observer = ephem.Observer()
-    observer.lat, observer.lon = str(LAT), str(LON)
-    observer.date = datetime.datetime.now(pytz.utc)
-    sun_ephem = ephem.Sun()
-    sun_ephem.compute(observer)
-    return math.degrees(sun_ephem.alt)
-
-def get_white_balance_rgb(temp_c):
-    # Map 0°C (Cold) to 9000K (Crisp Blue)
-    # Map 45°C (Scorching) to 4500K (Warm Haze)
-    clamped_temp = max(0, min(45, temp_c))
-    kelvin = 9000 - ((clamped_temp / 45.0) * 4500)
-    
-    # Standard algorithm to convert Kelvin to RGB
-    temp_k = kelvin / 100.0
-    
-    r = 255 if temp_k <= 66 else max(0, min(255, 329.6987 * ((temp_k - 60) ** -0.1332)))
-    g = max(0, min(255, 99.4708 * math.log(temp_k) - 161.1195)) if temp_k <= 66 else max(0, min(255, 288.1221 * ((temp_k - 60) ** -0.0755)))
-    b = 255 if temp_k >= 66 else (0 if temp_k <= 19 else max(0, min(255, 138.5177 * math.log(temp_k - 10) - 305.0447)))
-    
-    return [int(r), int(g), int(b)]
-
-def calculate_dynamic_sky_colors(altitude_deg, temp, clouds):
-    # 1. Base Altitude Gradient (Pure, neutral base colors)
-    keys = [
-        (-6,   15,   25,   60),   # Deep twilight
-        (0,   255,  100,   50),   # Sunrise/Sunset
-        (10,   80,  160,  255),   # Morning/Evening
-        (35,  255,  255,  255),   # Daytime (Set to pure white so WB tint takes over!)
-        (55,  255,  255,  255),   # High Sun 
-        (90,  255,  255,  255)    # Zenith
-    ]
-    
-    k1, k2 = keys[0], keys[-1]
-    for i in range(len(keys) - 1):
-        if keys[i][0] <= altitude_deg <= keys[i+1][0]:
-            k1, k2 = keys[i], keys[i+1]
-            break
-    if altitude_deg < keys[0][0]: k1 = k2 = keys[0]
-    elif altitude_deg > keys[-1][0]: k1 = k2 = keys[-1]
-
-    t = 0.0 if k2[0] == k1[0] else max(0.0, min(1.0, (altitude_deg - k1[0]) / (k2[0] - k1[0])))
-    r = lerp(k1[1], k2[1], t)
-    g = lerp(k1[2], k2[2], t)
-    b = lerp(k1[3], k2[3], t)
-
-    # 2. Apply Photographic White Balance
-    wb_tint = get_white_balance_rgb(temp)
-    r = (r * wb_tint[0]) / 255.0
-    g = (g * wb_tint[1]) / 255.0
-    b = (b * wb_tint[2]) / 255.0
-
-    # 3. Cloud Desaturation (Grey-shifting)
-    c_ratio = clouds / 100.0
-    grey_val = (r + g + b) / 3.0
-    desat_strength = c_ratio * 0.90 
-    
-    r = r + (grey_val - r) * desat_strength
-    g = g + (grey_val - g) * desat_strength
-    b = b + (grey_val - b) * desat_strength
-    
-    return [int(max(0, min(255, r))), int(max(0, min(255, g))), int(max(0, min(255, b)))]
+def calculate_position(now, start_time, end_time):
+    if now < start_time: return 0    
+    if now > end_time: return 255   
+    duration = (end_time - start_time).total_seconds()
+    elapsed = (now - start_time).total_seconds()
+    return int((elapsed / duration) * 255)
 
 # --- MAIN LOGIC ---
 def run_sky_engine():
-    # 1. Math & Positioning
     city = LocationInfo("Varanasi", "India", TIMEZONE, LAT, LON)
-    s = sun(city.observer, date=datetime.date.today(), tzinfo=city.timezone)
+    
+    # 1. Calculate Astronomical Positions
+    s_today = sun(city.observer, date=datetime.date.today(), tzinfo=city.timezone)
+    s_tomorrow = sun(city.observer, date=datetime.date.today() + datetime.timedelta(days=1), tzinfo=city.timezone)
     now = datetime.datetime.now(pytz.timezone(TIMEZONE))
     
-    target_x = calculate_sun_position(now, s["sunrise"], s["sunset"])
-    alt = get_solar_altitude()
+    observer = ephem.Observer()
+    observer.lat, observer.lon = str(LAT), str(LON)
+    observer.date = datetime.datetime.now(pytz.utc)
+    
+    sun_ephem = ephem.Sun()
+    sun_ephem.compute(observer)
+    alt = math.degrees(sun_ephem.alt)
+    
+    moon_ephem = ephem.Moon()
+    moon_ephem.compute(observer)
+    moon_phase = moon_ephem.phase / 100.0 
     
     # 2. Fetch Live Weather
     url = f"https://www.meteosource.com/api/v1/free/point?place_id=varanasi&sections=current&language=en&units=metric&key={METEOSOURCE_API_KEY}"
@@ -117,59 +65,51 @@ def run_sky_engine():
         clouds, temp, summary = 0, 25.0, "clear"
         
     is_stormy = "thunder" in summary or "storm" in summary
+    is_night = alt < 0
         
-    # 3. DESIGN BRACKET LOGIC
-    # Warm Sun base
-    sun_color = [255, 241, 224] 
-    if alt < 15:
-        progress = max(0, min(1, alt / 15.0))
-        sun_color = [255, int(lerp(140, 241, progress)), int(lerp(0, 224, progress))]
-        
-    # Apply dynamic weather API math to the sky
-    sky_color = calculate_dynamic_sky_colors(alt, temp, clouds)
-    
-    if is_stormy or clouds > 75:
-        # Overcast/Storm: Clouds swallow the sky, but keep LEDs powered!
-        progress = min(1.0, max(0.0, (clouds - 75) / 25.0))
-        sun_alpha = int(lerp(100, 0, progress))
-        global_bri = int(lerp(200, 150, progress)) if not is_stormy else 130
-        cloud_color = [15, 15, 15]     
-        # Removed the aggressive sky_color * 0.4 crush! Let the Kelvin + Desaturation do the work.
-        
-    elif clouds <= 35:
-        # Clear Day: Vivid sky, stark dark cuts
-        sun_alpha = 255
-        global_bri = 255
-        cloud_color = [27, 27, 27]  # ~#1b1b1b
-        
+    # 3. GET COLORS FROM MODULES
+    if is_night:
+        if now > s_today["sunset"]:
+            target_x = calculate_position(now, s_today["sunset"], s_tomorrow["sunrise"])
+        else:
+            yesterday_sunset = sun(city.observer, date=datetime.date.today() - datetime.timedelta(days=1), tzinfo=city.timezone)["sunset"]
+            target_x = calculate_position(now, yesterday_sunset, s_today["sunrise"])
+            
+        global_bri, sun_color, sky_color, cloud_color, sun_alpha = night_effects.get_night_payload(moon_phase, clouds, is_stormy)
     else:
-        # Partly Cloudy: Sun fades, clouds get slightly darker
-        progress = (clouds - 35) / 40.0
-        sun_alpha = int(lerp(255, 100, progress))
-        global_bri = int(lerp(255, 200, progress))
-        cloud_color = [20, 20, 20] 
+        target_x = calculate_position(now, s_today["sunrise"], s_today["sunset"])
+        global_bri, sun_color, sky_color, cloud_color, sun_alpha = day_effects.get_day_payload(alt, temp, clouds, is_stormy)
 
-    # 4. Build Payload
+    # 4. BUILD HARDWARE PAYLOAD
     payload = {
       "on": True, "bri": global_bri, "transition": 200, "live": True,             
       "seg": [
-        {
-          "id": 0, "fx": 142, "pal": 0,
-          "sx": target_x,              
-          "ix": int(clouds * 2.55),    
-          "c1": sun_alpha,             
-          "col": [ sun_color, sky_color, cloud_color ]
-        },
-        { "id": 3, "on": True },
-        { "id": 4, "on": True }
+        # Segment 0: The Sky Engine
+        { "id": 0, "fx": 142, "pal": 0, "sx": target_x, "ix": int(clouds * 2.55), "c1": sun_alpha, "col": [ sun_color, sky_color, cloud_color ] },
+        
+        # Segment 1 & 2: Solid Downlights (Reserved configuration)
+        { "id": 1, "on": True, "fx": 0 },
+        { "id": 2, "on": True, "fx": 0 },
+        
+        # Segment 4: The Air Curtain
+        { "id": 4, "on": True, "bri": 255, "fx": 83, "sx": 128, "ix": 128, "pal": 59, "col": [ [255, 255, 255], [0, 0, 0], [0, 0, 0] ] },
+        
+        # Segment 5: PWM Output
+        { "id": 5, "on": True },
+        
+        # Segment 6 & 7: Relays
+        { "id": 6, "on": True },
+        { "id": 7, "on": True }
       ]
     }
     
-    # 5. Restored Console Logging (Now includes Global Brightness!)
-    print(f"Pos: {target_x}/255 | Alt: {alt:.1f}° | Temp: {temp}°C | Bri: {global_bri}/255")
-    print(f"Clouds: {clouds}% | Sky: {sky_color} | CloudColor: {cloud_color} | Sun Alpha: {sun_alpha}")
+    # 5. CONSOLE LOGGING
+    mode_name = "NIGHT" if is_night else "DAY"
+    print(f"[{mode_name}] Pos: {target_x}/255 | Alt: {alt:.1f}° | Temp: {temp}°C | Bri: {global_bri}/255")
+    if is_night: print(f"Moon Phase: {moon_phase*100:.1f}%")
+    print(f"Clouds: {clouds}% | Sky: {sky_color} | CloudColor: {cloud_color} | Sun/Moon Alpha: {sun_alpha}")
     
-    # 5. Push to MQTT
+    # 6. PUSH TO MQTT
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
             
