@@ -85,7 +85,16 @@ def run_sky_engine():
       "on": True, "bri": global_bri, "transition": 200, "live": True,             
       "seg": [
         # Segment 0: The Sky Engine
-        { "id": 0, "fx": 142, "pal": 0, "sx": target_x, "ix": int(clouds * 2.55), "c1": sun_alpha, "col": [ sun_color, sky_color, cloud_color ] },
+        { 
+          "id": 0, 
+          "bri": 255,    # <--- THE FIX: Pins the segment's local opacity to MAX
+          "fx": 142, 
+          "pal": 0, 
+          "sx": target_x, 
+          "ix": int(clouds * 2.55), 
+          "c1": sun_alpha, 
+          "col": [ sun_color, sky_color, cloud_color ] 
+        },
         
         # Segment 1 & 2: Solid Downlights (Reserved configuration)
         { "id": 1, "on": True, "fx": 0 },
