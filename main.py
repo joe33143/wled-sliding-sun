@@ -119,9 +119,10 @@ def run_sky_engine():
       "on": True, "bri": global_bri, "transition": 200, "live": True,             
       "seg": [
         {
-          "id": 0, "fx": 142, "sx": target_x, "ix": 0, "pal": 0,
-          "c1": int(clouds * 2.55),  
-          "c2": sun_alpha,    # Variable Alpha sent to Ghost RAM!
+          "id": 0, "fx": 142, "pal": 0,
+          "sx": target_x,              # Slider 1: Target Position
+          "ix": int(clouds * 2.55),    # Slider 2: Cloud Cover (Shifted)
+          "c1": sun_alpha,             # Slider 3: Sun Alpha (Shifted)
           "col": [ sun_color, sky_color, cloud_color ]
         },
         { "id": 3, "on": True },
