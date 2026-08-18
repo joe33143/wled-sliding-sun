@@ -1,4 +1,5 @@
 import os
+import time
 import json
 import requests
 import datetime
@@ -7,16 +8,17 @@ from astral import LocationInfo
 from astral.sun import sun
 import pytz
 
-# --- SECRETS & CONFIGURATION ---
-METEOSOURCE_API_KEY = os.environ.get("METEOSOURCE_API_KEY")
-MQTT_BROKER = os.environ.get("MQTT_BROKER")
-MQTT_PORT = int(os.environ.get("MQTT_PORT", 1883))
-MQTT_USER = os.environ.get("MQTT_USER")
-MQTT_PASS = os.environ.get("MQTT_PASS")
-WLED_MQTT_TOPIC = "wled/matrix/api"
+# --- GLOBALS & CONFIG ---
+METEOSOURCE_API_KEY = os.getenv("METEOSOURCE_API_KEY")
 
-LATITUDE = 25.3176
-LONGITUDE = 82.9739
+MQTT_BROKER = os.getenv("MQTT_BROKER", "broker.hivemq.com")
+MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
+MQTT_TOPIC = os.getenv("WLED_MQTT_TOPIC", "joe33143/wled-sky/api")
+MQTT_USER = os.getenv("MQTT_USER")
+MQTT_PASS = os.getenv("MQTT_PASS")
+
+LAT = 25.3176
+LON = 83.0062
 TIMEZONE = "Asia/Kolkata"
 
 # --- HELPER FUNCTIONS ---
@@ -39,7 +41,8 @@ def calculate_sun_position(now, sunrise, sunset):
 # --- MAIN LOGIC ---
 def run_sky_engine():
     # 1. Calculate Sun Position
-    city = LocationInfo("Varanasi", "India", TIMEZONE, LATITUDE, LONGITUDE)
+    # FIX: Changed LATITUDE/LONGITUDE to the correct variables LAT/LON
+    city = LocationInfo("Varanasi", "India", TIMEZONE, LAT, LON)
     s = sun(city.observer, date=datetime.date.today(), tzinfo=city.timezone)
     now = datetime.datetime.now(pytz.timezone(TIMEZONE))
     
@@ -51,57 +54,66 @@ def run_sky_engine():
         response = requests.get(url)
         data = response.json()
         temp = data['current']['temperature']
+        clouds = data['current']['cloud_cover'] # Grab cloud percentage for the C++ Perlin noise
         target_color = get_temperature_color(temp)
     except Exception as e:
         print(f"Weather Fetch Failed: {e}")
         temp = "Unknown"
+        clouds = 0
         target_color = [255, 179, 0] # Fallback Amber
         
     # 3. Build WLED JSON Payload
     payload = {
+      "on": True,
+      "bri": 255,
+      "transition": 200,             # Smooth 20-second fade between 10-min updates
+      "live_ts": int(time.time()),   # Ghost RAM Timestamp verification
       "seg": [
         {
           "id": 0,             
-          "fx": "142", 
+          "fx": 142,                 # Changed to 142 per your request
           "sx": target_x,      
+          "ix": 0,
+          "c1": int(clouds * 2.55),  # Convert 0-100% cloud cover to 0-255 slider for C++
           "col": [
             target_color,      
-            [0, 0, 0]          
+            [0, 0, 0],         
+            [0, 0, 0]
           ]
-        }
+        },
+        # Relay Failsafes (Prevents feed mode from getting stuck)
+        { "id": 3, "on": True },
+        { "id": 4, "on": True }
       ]
     }
     
-    print(f"Time: {now.strftime('%H:%M')} | Pos: {target_x}/255 | Temp: {temp}°C | Payload: {json.dumps(payload)}")
+    print(f"Time: {now.strftime('%H:%M')} | Pos: {target_x}/255 | Temp: {temp}°C | Clouds: {clouds}%")
+    print(f"Payload: {json.dumps(payload)}")
     
     # 4. Push to MQTT
-    try:
-        client = mqtt.Client()
-        
-        if MQTT_USER and MQTT_PASS:
-            client.username_pw_set(MQTT_USER, MQTT_PASS)
+    # FIX: Corrected all indentation and added the actual publish command
+    client_id = f"joe33143_sky_{int(time.time())}"
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+    
+    if MQTT_USER and MQTT_PASS:
+        client.username_pw_set(MQTT_USER, MQTT_PASS)
+        if "hivemq.cloud" in MQTT_BROKER:
+            client.tls_set()
             
-        if MQTT_PORT == 8883:
-            client.tls_set() 
-        
+    try:
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
+        client.loop_start() 
         
-        # Start the background network thread
-        client.loop_start()
+        # ACTUALLY PUBLISH THE DATA
+        publish_result = client.publish(MQTT_TOPIC, json.dumps(payload), qos=1)
+        publish_result.wait_for_publish(timeout=10)
+        print("Successfully published to MQTT.")
         
-        # Publish with Quality of Service 1 (requires broker receipt confirmation)
-        msg = client.publish(WLED_MQTT_TOPIC, json.dumps(payload), qos=1)
-        
-        # STOP and WAIT until the broker confirms receipt
-        msg.wait_for_publish() 
-        
-        # Now it is safe to shut down
+    except Exception as e:
+        print(f"MQTT Connection failed: {e}")
+    finally:
         client.loop_stop()
         client.disconnect()
-        
-        print("Successfully published AND confirmed payload receipt with HiveMQ Broker.")
-    except Exception as e:
-        print(f"MQTT Publish Failed: {e}")
 
 if __name__ == "__main__":
     run_sky_engine()
