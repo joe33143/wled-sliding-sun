@@ -127,27 +127,27 @@ def run_sky_engine():
         
     # Apply dynamic weather API math to the sky
     sky_color = calculate_dynamic_sky_colors(alt, temp, clouds)
-    global_bri = 255
     
     if is_stormy or clouds > 75:
-        # Overcast/Storm: Clouds swallow the sky, pushing towards pitch black
+        # Overcast/Storm: Clouds swallow the sky, but keep LEDs powered!
         progress = min(1.0, max(0.0, (clouds - 75) / 25.0))
         sun_alpha = int(lerp(100, 0, progress))
-        global_bri = int(lerp(160, 100, progress)) if not is_stormy else 80
-        cloud_color = [5, 5, 5]     # Near black for maximum doom
-        sky_color = [int(c * 0.4) for c in sky_color] # Crush the sky brightness behind the storm
+        global_bri = int(lerp(200, 150, progress)) if not is_stormy else 130
+        cloud_color = [15, 15, 15]     
+        # Removed the aggressive sky_color * 0.4 crush! Let the Kelvin + Desaturation do the work.
         
     elif clouds <= 35:
-        # Clear Day: Vivid sky, rare dark cloudy flares cutting the background
+        # Clear Day: Vivid sky, stark dark cuts
         sun_alpha = 255
-        cloud_color = [25, 25, 25]  # ~10% white for deep cuts
+        global_bri = 255
+        cloud_color = [27, 27, 27]  # ~#1b1b1b
         
     else:
-        # Partly Cloudy: Sun fades, clouds get darker and larger
+        # Partly Cloudy: Sun fades, clouds get slightly darker
         progress = (clouds - 35) / 40.0
         sun_alpha = int(lerp(255, 100, progress))
-        global_bri = int(lerp(255, 160, progress))
-        cloud_color = [15, 15, 15]  # Very dark grey
+        global_bri = int(lerp(255, 200, progress))
+        cloud_color = [20, 20, 20] 
 
     # 4. Build Payload
     payload = {
@@ -165,7 +165,8 @@ def run_sky_engine():
       ]
     }
     
-    print(f"Pos: {target_x}/255 | Alt: {alt:.1f}° | Temp: {temp}°C")
+    # 5. Restored Console Logging (Now includes Global Brightness!)
+    print(f"Pos: {target_x}/255 | Alt: {alt:.1f}° | Temp: {temp}°C | Bri: {global_bri}/255")
     print(f"Clouds: {clouds}% | Sky: {sky_color} | CloudColor: {cloud_color} | Sun Alpha: {sun_alpha}")
     
     # 5. Push to MQTT
