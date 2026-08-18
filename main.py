@@ -83,7 +83,6 @@ def run_sky_engine():
         clouds = 0
         
     # 3. DESIGN BRACKET LOGIC
-    # Base 5500K Warm Sun. (Gets slightly orange if altitude < 15)
     sun_color = [255, 241, 224] 
     if alt < 15:
         progress = max(0, min(1, alt / 15.0))
@@ -93,26 +92,24 @@ def run_sky_engine():
     global_bri = 255
     
     if clouds <= 35:
-        # Clear/Fair Day: Max Sun, Bright Fluffy White Clouds
+        # Clear Day: Stark contrast!
         sun_alpha = 255
-        cloud_color = [240, 240, 240]
+        cloud_color = [255, 255, 255] # Pure white clouds against the blue sky
         
     elif clouds <= 75:
-        # Partly/Mostly Cloudy: Sun fades out, Clouds turn grey, Global dimming
-        progress = (clouds - 35) / 40.0 # 0.0 to 1.0
+        # Partly Cloudy: Keep RGB values high, let global brightness do the dimming
+        progress = (clouds - 35) / 40.0
         sun_alpha = int(lerp(255, 60, progress))
-        global_bri = int(lerp(255, 160, progress))
-        grey_val = int(lerp(240, 100, progress))
-        cloud_color = [grey_val, grey_val, grey_val]
+        global_bri = int(lerp(255, 120, progress)) 
+        cloud_color = [200, 200, 210] # Bright grey, maintains hue without red shift!
         
     else:
-        # Overcast/Storm: Gloomy Mode, Sun completely hidden, Dark Storm Clouds
+        # Overcast: Drop global brightness hard, use highly distinct slate-grey clouds
         progress = (clouds - 75) / 25.0
         sun_alpha = int(lerp(60, 0, progress))
-        global_bri = int(lerp(160, 80, progress))
-        cloud_color = [40, 40, 45]
-        # Darken the sky behind the gloom
-        sky_color = [int(c * 0.5) for c in sky_color]
+        global_bri = int(lerp(120, 50, progress))
+        cloud_color = [150, 150, 160] # Distinct slate grey
+        sky_color = [int(c * 0.7) for c in sky_color]
         
     # 4. Build Payload
     payload = {
