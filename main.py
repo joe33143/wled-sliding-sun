@@ -38,15 +38,30 @@ def get_solar_altitude():
     sun_ephem.compute(observer)
     return math.degrees(sun_ephem.alt)
 
+def get_white_balance_rgb(temp_c):
+    # Map 0°C (Cold) to 9000K (Crisp Blue)
+    # Map 45°C (Scorching) to 4500K (Warm Haze)
+    clamped_temp = max(0, min(45, temp_c))
+    kelvin = 9000 - ((clamped_temp / 45.0) * 4500)
+    
+    # Standard algorithm to convert Kelvin to RGB
+    temp_k = kelvin / 100.0
+    
+    r = 255 if temp_k <= 66 else max(0, min(255, 329.6987 * ((temp_k - 60) ** -0.1332)))
+    g = max(0, min(255, 99.4708 * math.log(temp_k) - 161.1195)) if temp_k <= 66 else max(0, min(255, 288.1221 * ((temp_k - 60) ** -0.0755)))
+    b = 255 if temp_k >= 66 else (0 if temp_k <= 19 else max(0, min(255, 138.5177 * math.log(temp_k - 10) - 305.0447)))
+    
+    return [int(r), int(g), int(b)]
+
 def calculate_dynamic_sky_colors(altitude_deg, temp, clouds):
-    # 1. Base Altitude Gradient
+    # 1. Base Altitude Gradient (Pure, neutral base colors)
     keys = [
-        (-6,   15,   25,   60),   # Deep twilight blue
+        (-6,   15,   25,   60),   # Deep twilight
         (0,   255,  100,   50),   # Sunrise/Sunset
         (10,   80,  160,  255),   # Morning/Evening
-        (35,   20,  120,  255),   # Daytime
-        (55,    5,   90,  255),   # High Sun
-        (90,    0,   70,  255)    # Zenith
+        (35,  255,  255,  255),   # Daytime (Set to pure white so WB tint takes over!)
+        (55,  255,  255,  255),   # High Sun 
+        (90,  255,  255,  255)    # Zenith
     ]
     
     k1, k2 = keys[0], keys[-1]
@@ -62,28 +77,22 @@ def calculate_dynamic_sky_colors(altitude_deg, temp, clouds):
     g = lerp(k1[2], k2[2], t)
     b = lerp(k1[3], k2[3], t)
 
-    # 2. Temperature Modification (Heat Haze vs Crisp Cold)
-    # Assumes 25°C is a "neutral" baseline sky.
-    temp_diff = temp - 25.0
-    r += (temp_diff * 1.5)  # Warmer days get redder/hazier
-    b -= (temp_diff * 1.5)
+    # 2. Apply Photographic White Balance
+    wb_tint = get_white_balance_rgb(temp)
+    r = (r * wb_tint[0]) / 255.0
+    g = (g * wb_tint[1]) / 255.0
+    b = (b * wb_tint[2]) / 255.0
 
     # 3. Cloud Desaturation (Grey-shifting)
-    # The more clouds there are, the more the sky loses its vivid color and turns grey.
     c_ratio = clouds / 100.0
     grey_val = (r + g + b) / 3.0
-    desat_strength = c_ratio * 0.85 # Max 85% desaturation on fully overcast days
+    desat_strength = c_ratio * 0.90 
     
     r = r + (grey_val - r) * desat_strength
     g = g + (grey_val - g) * desat_strength
     b = b + (grey_val - b) * desat_strength
     
-    # Clamp final values safely within 0-255
-    r = int(max(0, min(255, r)))
-    g = int(max(0, min(255, g)))
-    b = int(max(0, min(255, b)))
-    
-    return [r, g, b]
+    return [int(max(0, min(255, r))), int(max(0, min(255, g))), int(max(0, min(255, b)))]
 
 # --- MAIN LOGIC ---
 def run_sky_engine():
