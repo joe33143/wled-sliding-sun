@@ -23,12 +23,6 @@ TIMEZONE = "Asia/Kolkata"
 def lerp(a, b, t):
     return a + (b - a) * t
 
-def get_temperature_color(temp):
-    if temp <= 15: return [0, 255, 255]       
-    if temp <= 25: return [255, 255, 0]       
-    if temp <= 35: return [255, 140, 0]       
-    return [255, 0, 0]                        
-
 def calculate_sun_position(now, sunrise, sunset):
     if now < sunrise: return 0    
     if now > sunset: return 255   
@@ -44,15 +38,15 @@ def get_solar_altitude():
     sun_ephem.compute(observer)
     return math.degrees(sun_ephem.alt)
 
-def calculate_base_day_colors(altitude_deg, clouds):
-    c = clouds / 100.0
+def calculate_base_day_colors(altitude_deg):
+    # Calculates just the base sky background gradient
     keys = [
-        (-6,   35,  45,  75,   0),  
-        (0,   120, 110, 140,  18),  
-        (10,  190, 185, 205,  40),  
-        (35,  240, 235, 235, 100),  
-        (55,  255, 250, 245, 160),  
-        (90,  255, 255, 255, 200)   
+        (-6,   35,  45,  75),  
+        (0,   120, 110, 140),  
+        (10,  190, 185, 205),  
+        (35,  240, 235, 235),  
+        (55,  255, 250, 245),  
+        (90,  255, 255, 255)   
     ]
     k1, k2 = keys[0], keys[-1]
     for i in range(len(keys) - 1):
@@ -63,14 +57,9 @@ def calculate_base_day_colors(altitude_deg, clouds):
     elif altitude_deg > keys[-1][0]: k1 = k2 = keys[-1]
 
     t = 0.0 if k2[0] == k1[0] else max(0.0, min(1.0, (altitude_deg - k1[0]) / (k2[0] - k1[0])))
-    r = lerp(k1[1], k2[1], t)
-    g = lerp(k1[2], k2[2], t)
-    b = lerp(k1[3], k2[3], t)
-
-    dim = 1.0 - (c * 0.5)
-    r = int(max(0, min(255, r * dim)))
-    g = int(max(0, min(255, g * dim)))
-    b = int(max(0, min(255, b * dim)))
+    r = int(lerp(k1[1], k2[1], t) * 0.45) # 0.45 keeps sky slightly darker than clouds
+    g = int(lerp(k1[2], k2[2], t) * 0.45)
+    b = int(lerp(k1[3], k2[3], t) * 0.45)
     return [r, g, b]
 
 # --- MAIN LOGIC ---
@@ -88,32 +77,61 @@ def run_sky_engine():
     try:
         response = requests.get(url)
         data = response.json()
-        temp = data['current']['temperature']
         clouds = data['current']['cloud_cover'] 
     except Exception as e:
         print(f"Weather Fetch Failed: {e}")
-        temp, clouds = 25, 0
+        clouds = 0
         
-    sun_color = get_temperature_color(temp)
-    sky_color = calculate_base_day_colors(alt, clouds)
+    # 3. DESIGN BRACKET LOGIC
+    # Base 5500K Warm Sun. (Gets slightly orange if altitude < 15)
+    sun_color = [255, 241, 224] 
+    if alt < 15:
+        progress = max(0, min(1, alt / 15.0))
+        sun_color = [255, int(lerp(140, 241, progress)), int(lerp(0, 224, progress))]
         
-    # 3. Build Payload
+    sky_color = calculate_base_day_colors(alt)
+    global_bri = 255
+    
+    if clouds <= 35:
+        # Clear/Fair Day: Max Sun, Bright Fluffy White Clouds
+        sun_alpha = 255
+        cloud_color = [240, 240, 240]
+        
+    elif clouds <= 75:
+        # Partly/Mostly Cloudy: Sun fades out, Clouds turn grey, Global dimming
+        progress = (clouds - 35) / 40.0 # 0.0 to 1.0
+        sun_alpha = int(lerp(255, 60, progress))
+        global_bri = int(lerp(255, 160, progress))
+        grey_val = int(lerp(240, 100, progress))
+        cloud_color = [grey_val, grey_val, grey_val]
+        
+    else:
+        # Overcast/Storm: Gloomy Mode, Sun completely hidden, Dark Storm Clouds
+        progress = (clouds - 75) / 25.0
+        sun_alpha = int(lerp(60, 0, progress))
+        global_bri = int(lerp(160, 80, progress))
+        cloud_color = [40, 40, 45]
+        # Darken the sky behind the gloom
+        sky_color = [int(c * 0.5) for c in sky_color]
+        
+    # 4. Build Payload
     payload = {
-      "on": True, "bri": 255, "transition": 200, "live": True,             
+      "on": True, "bri": global_bri, "transition": 200, "live": True,             
       "seg": [
         {
-          "id": 0, "fx": 142, "sx": target_x, "ix": 0,
+          "id": 0, "fx": 142, "sx": target_x, "ix": 0, "pal": 0,
           "c1": int(clouds * 2.55),  
-          "col": [ sun_color, sky_color, [0, 0, 0] ]
+          "c2": sun_alpha,    # Variable Alpha sent to Ghost RAM!
+          "col": [ sun_color, sky_color, cloud_color ]
         },
         { "id": 3, "on": True },
         { "id": 4, "on": True }
       ]
     }
     
-    print(f"Time: {now.strftime('%H:%M')} | Pos: {target_x}/255 | Alt: {alt:.1f}° | Sky: {sky_color} | Clouds: {clouds}%")
+    print(f"Pos: {target_x}/255 | Alt: {alt:.1f}° | Clouds: {clouds}% | Sun Alpha: {sun_alpha}/255 | Bri: {global_bri}")
     
-    # 4. Push to MQTT
+    # 5. Push to MQTT
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
             
