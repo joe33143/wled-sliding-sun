@@ -38,28 +38,51 @@ def get_solar_altitude():
     sun_ephem.compute(observer)
     return math.degrees(sun_ephem.alt)
 
-def calculate_base_day_colors(altitude_deg):
-    # Calculates just the base sky background gradient
+def calculate_dynamic_sky_colors(altitude_deg, temp, clouds):
+    # 1. Base Altitude Gradient
     keys = [
-        (-6,   35,  45,  75),  
-        (0,   120, 110, 140),  
-        (10,  190, 185, 205),  
-        (35,  240, 235, 235),  
-        (55,  255, 250, 245),  
-        (90,  255, 255, 255)   
+        (-6,   15,   25,   60),   # Deep twilight blue
+        (0,   255,  100,   50),   # Sunrise/Sunset
+        (10,   80,  160,  255),   # Morning/Evening
+        (35,   20,  120,  255),   # Daytime
+        (55,    5,   90,  255),   # High Sun
+        (90,    0,   70,  255)    # Zenith
     ]
+    
     k1, k2 = keys[0], keys[-1]
     for i in range(len(keys) - 1):
         if keys[i][0] <= altitude_deg <= keys[i+1][0]:
-            k1, k2 = keys[i], keys[i+1]
+            k1, k2 = keys[i], k2 = keys[i+1]
             break
     if altitude_deg < keys[0][0]: k1 = k2 = keys[0]
     elif altitude_deg > keys[-1][0]: k1 = k2 = keys[-1]
 
     t = 0.0 if k2[0] == k1[0] else max(0.0, min(1.0, (altitude_deg - k1[0]) / (k2[0] - k1[0])))
-    r = int(lerp(k1[1], k2[1], t) * 0.45) # 0.45 keeps sky slightly darker than clouds
-    g = int(lerp(k1[2], k2[2], t) * 0.45)
-    b = int(lerp(k1[3], k2[3], t) * 0.45)
+    r = lerp(k1[1], k2[1], t)
+    g = lerp(k1[2], k2[2], t)
+    b = lerp(k1[3], k2[3], t)
+
+    # 2. Temperature Modification (Heat Haze vs Crisp Cold)
+    # Assumes 25°C is a "neutral" baseline sky.
+    temp_diff = temp - 25.0
+    r += (temp_diff * 1.5)  # Warmer days get redder/hazier
+    b -= (temp_diff * 1.5)
+
+    # 3. Cloud Desaturation (Grey-shifting)
+    # The more clouds there are, the more the sky loses its vivid color and turns grey.
+    c_ratio = clouds / 100.0
+    grey_val = (r + g + b) / 3.0
+    desat_strength = c_ratio * 0.85 # Max 85% desaturation on fully overcast days
+    
+    r = r + (grey_val - r) * desat_strength
+    g = g + (grey_val - g) * desat_strength
+    b = b + (grey_val - b) * desat_strength
+    
+    # Clamp final values safely within 0-255
+    r = int(max(0, min(255, r)))
+    g = int(max(0, min(255, g)))
+    b = int(max(0, min(255, b)))
+    
     return [r, g, b]
 
 # --- MAIN LOGIC ---
@@ -78,48 +101,54 @@ def run_sky_engine():
         response = requests.get(url)
         data = response.json()
         clouds = data['current']['cloud_cover'] 
+        temp = data['current']['temperature']
+        summary = data['current']['summary'].lower()
     except Exception as e:
         print(f"Weather Fetch Failed: {e}")
-        clouds = 0
+        clouds, temp, summary = 0, 25.0, "clear"
+        
+    is_stormy = "thunder" in summary or "storm" in summary
         
     # 3. DESIGN BRACKET LOGIC
+    # Warm Sun base
     sun_color = [255, 241, 224] 
     if alt < 15:
         progress = max(0, min(1, alt / 15.0))
         sun_color = [255, int(lerp(140, 241, progress)), int(lerp(0, 224, progress))]
         
-    sky_color = calculate_base_day_colors(alt)
+    # Apply dynamic weather API math to the sky
+    sky_color = calculate_dynamic_sky_colors(alt, temp, clouds)
     global_bri = 255
     
-    if clouds <= 35:
-        # Clear Day: Stark contrast!
-        sun_alpha = 255
-        cloud_color = [255, 255, 255] # Pure white clouds against the blue sky
+    if is_stormy or clouds > 75:
+        # Overcast/Storm: Clouds swallow the sky, pushing towards pitch black
+        progress = min(1.0, max(0.0, (clouds - 75) / 25.0))
+        sun_alpha = int(lerp(100, 0, progress))
+        global_bri = int(lerp(160, 100, progress)) if not is_stormy else 80
+        cloud_color = [5, 5, 5]     # Near black for maximum doom
+        sky_color = [int(c * 0.4) for c in sky_color] # Crush the sky brightness behind the storm
         
-    elif clouds <= 75:
-        # Partly Cloudy: Keep RGB values high, let global brightness do the dimming
-        progress = (clouds - 35) / 40.0
-        sun_alpha = int(lerp(255, 60, progress))
-        global_bri = int(lerp(255, 120, progress)) 
-        cloud_color = [200, 200, 210] # Bright grey, maintains hue without red shift!
+    elif clouds <= 35:
+        # Clear Day: Vivid sky, rare dark cloudy flares cutting the background
+        sun_alpha = 255
+        cloud_color = [25, 25, 25]  # ~10% white for deep cuts
         
     else:
-        # Overcast: Drop global brightness hard, use highly distinct slate-grey clouds
-        progress = (clouds - 75) / 25.0
-        sun_alpha = int(lerp(60, 0, progress))
-        global_bri = int(lerp(120, 50, progress))
-        cloud_color = [150, 150, 160] # Distinct slate grey
-        sky_color = [int(c * 0.7) for c in sky_color]
-        
+        # Partly Cloudy: Sun fades, clouds get darker and larger
+        progress = (clouds - 35) / 40.0
+        sun_alpha = int(lerp(255, 100, progress))
+        global_bri = int(lerp(255, 160, progress))
+        cloud_color = [15, 15, 15]  # Very dark grey
+
     # 4. Build Payload
     payload = {
       "on": True, "bri": global_bri, "transition": 200, "live": True,             
       "seg": [
         {
           "id": 0, "fx": 142, "pal": 0,
-          "sx": target_x,              # Slider 1: Target Position
-          "ix": int(clouds * 2.55),    # Slider 2: Cloud Cover (Shifted)
-          "c1": sun_alpha,             # Slider 3: Sun Alpha (Shifted)
+          "sx": target_x,              
+          "ix": int(clouds * 2.55),    
+          "c1": sun_alpha,             
           "col": [ sun_color, sky_color, cloud_color ]
         },
         { "id": 3, "on": True },
@@ -127,7 +156,8 @@ def run_sky_engine():
       ]
     }
     
-    print(f"Pos: {target_x}/255 | Alt: {alt:.1f}° | Clouds: {clouds}% | Sun Alpha: {sun_alpha}/255 | Bri: {global_bri}")
+    print(f"Pos: {target_x}/255 | Alt: {alt:.1f}° | Temp: {temp}°C")
+    print(f"Clouds: {clouds}% | Sky: {sky_color} | CloudColor: {cloud_color} | Sun Alpha: {sun_alpha}")
     
     # 5. Push to MQTT
     client_id = f"joe33143_sky_{int(time.time())}"
