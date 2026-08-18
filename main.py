@@ -52,7 +52,7 @@ def calculate_dynamic_sky_colors(altitude_deg, temp, clouds):
     k1, k2 = keys[0], keys[-1]
     for i in range(len(keys) - 1):
         if keys[i][0] <= altitude_deg <= keys[i+1][0]:
-            k1, k2 = keys[i], k2 = keys[i+1]
+            k1, k2 = keys[i], keys[i+1]
             break
     if altitude_deg < keys[0][0]: k1 = k2 = keys[0]
     elif altitude_deg > keys[-1][0]: k1 = k2 = keys[-1]
