@@ -37,7 +37,6 @@ def calculate_sun_position(now, sunrise, sunset):
 # --- MAIN LOGIC ---
 def run_sky_engine():
     # 1. Calculate Sun Position
-    # FIX: Changed LATITUDE/LONGITUDE to the correct variables LAT/LON
     city = LocationInfo("Varanasi", "India", TIMEZONE, LAT, LON)
     s = sun(city.observer, date=datetime.date.today(), tzinfo=city.timezone)
     now = datetime.datetime.now(pytz.timezone(TIMEZONE))
@@ -63,11 +62,11 @@ def run_sky_engine():
       "on": True,
       "bri": 255,
       "transition": 200,             
-      "live": True,             # <-- REPLACED THE TIMESTAMP WITH A SIMPLE BOOLEAN
+      "live": True,             # Ghost RAM Boolean Trigger
       "seg": [
         {
           "id": 0,             
-          "fx": 142,                 # Changed to 142 per your request
+          "fx": 142,                 
           "sx": target_x,      
           "ix": 0,
           "c1": int(clouds * 2.55),  # Convert 0-100% cloud cover to 0-255 slider for C++
@@ -86,15 +85,9 @@ def run_sky_engine():
     print(f"Time: {now.strftime('%H:%M')} | Pos: {target_x}/255 | Temp: {temp}°C | Clouds: {clouds}%")
     print(f"Payload: {json.dumps(payload)}")
     
-    # 4. Push to MQTT
-    # FIX: Corrected all indentation and added the actual publish command
+    # 4. Push to MQTT (Public Broker - No Auth Required)
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
-    
-    if MQTT_USER and MQTT_PASS:
-        client.username_pw_set(MQTT_USER, MQTT_PASS)
-        if "hivemq.cloud" in MQTT_BROKER:
-            client.tls_set()
             
     try:
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
