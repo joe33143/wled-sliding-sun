@@ -81,13 +81,18 @@ def run_sky_engine():
         global_bri, sun_color, sky_color, cloud_color, sun_alpha = day_effects.get_day_payload(alt, temp, clouds, is_stormy)
 
     # 4. BUILD HARDWARE PAYLOAD
+    
+    # Calculate Downlight Brightness (10% higher than the brightest channel of the cloud color)
+    # Adding +25 ensures an absolute 10% bump on the 0-255 scale so it doesn't get too dark at night.
+    downlight_bri = int(min(255, max(cloud_color) + 25))
+
     payload = {
       "on": True, "bri": global_bri, "transition": 200, "live": True,             
       "seg": [
         # Segment 0: The Sky Engine
         { 
           "id": 0, 
-          "bri": 255,    # <--- THE FIX: Pins the segment's local opacity to MAX
+          "bri": 255,
           "fx": 142, 
           "pal": 0, 
           "sx": target_x, 
@@ -96,9 +101,17 @@ def run_sky_engine():
           "col": [ sun_color, sky_color, cloud_color ] 
         },
         
-        # Segment 1 & 2: Solid Downlights (Reserved configuration)
-        { "id": 1, "on": True, "fx": 0 },
-        { "id": 2, "on": True, "fx": 0 },
+        # Segment 1 & 2: Solid Downlights (Dynamic brightness + 10%)
+        { 
+          "id": 1, "on": True, "bri": downlight_bri, 
+          "fx": 88, "sx": 96, "ix": 224, "pal": 9, 
+          "col": [ [255, 255, 255], [0, 0, 0], [0, 0, 0] ] 
+        },
+        { 
+          "id": 2, "on": True, "bri": downlight_bri, 
+          "fx": 88, "sx": 96, "ix": 224, "pal": 9, 
+          "col": [ [255, 255, 255], [0, 0, 0], [0, 0, 0] ] 
+        },
         
         # Segment 4: The Air Curtain
         { "id": 4, "on": True, "bri": 255, "fx": 83, "sx": 128, "ix": 128, "pal": 59, "col": [ [255, 255, 255], [0, 0, 0], [0, 0, 0] ] },
