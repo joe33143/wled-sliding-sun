@@ -66,8 +66,8 @@ def run_sky_engine():
     payload = {
       "on": True,
       "bri": 255,
-      "transition": 200,             # Smooth 20-second fade between 10-min updates
-      "live_ts": int(time.time()),   # Ghost RAM Timestamp verification
+      "transition": 200,             
+      "live": True,             # <-- REPLACED THE TIMESTAMP WITH A SIMPLE BOOLEAN
       "seg": [
         {
           "id": 0,             
