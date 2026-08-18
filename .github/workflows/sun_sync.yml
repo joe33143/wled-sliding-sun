@@ -25,9 +25,4 @@ jobs:
       - name: Run Sky Engine Script
         env:
           METEOSOURCE_API_KEY: ${{ secrets.METEOSOURCE_API_KEY }}
-          MQTT_BROKER: ${{ secrets.MQTT_BROKER }}
-          MQTT_PORT: ${{ secrets.MQTT_PORT }}
-          # MQTT_USER: ${{ secrets.HIVEMQ_USERNAME }}
-          # MQTT_PASS: ${{ secrets.HIVEMQ_password }}
-          WLED_MQTT_TOPIC: ${{ secrets.WLED_MQTT_TOPIC }}
         run: python main.py
