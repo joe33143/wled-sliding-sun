@@ -13,7 +13,7 @@ METEOSOURCE_API_KEY = os.getenv("METEOSOURCE_API_KEY")
 
 MQTT_BROKER = os.getenv("MQTT_BROKER", "broker.hivemq.com")
 MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
-MQTT_TOPIC = os.getenv("WLED_MQTT_TOPIC", "joe33143/wled-sky/api")
+MQTT_TOPIC = os.getenv("WLED_MQTT_TOPIC", "joe33143/reef/api")
 MQTT_USER = os.getenv("MQTT_USER")
 MQTT_PASS = os.getenv("MQTT_PASS")
 
