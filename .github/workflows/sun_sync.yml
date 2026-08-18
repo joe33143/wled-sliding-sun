@@ -1,11 +1,9 @@
 name: 8x64 Sliding Sun Engine
 
 on:
-  schedule:
-    # Runs every 10 minutes
-    - cron: "*/10 * * * *"
-  workflow_dispatch: 
-    # Allows manual triggering from the GitHub UI
+  workflow_dispatch:      
+  repository_dispatch:    
+    types: [trigger-weather]
 
 jobs:
   update-matrix:
