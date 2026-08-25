@@ -80,58 +80,79 @@ def run_sky_engine():
         target_x = calculate_position(now, s_today["sunrise"], s_today["sunset"])
         global_bri, sun_color, sky_color, cloud_color, sun_alpha = day_effects.get_day_payload(alt, temp, clouds, is_stormy)
 
-    # 4. BUILD HARDWARE PAYLOAD
-    
-    # Calculate Downlight Brightness (10% higher than the brightest channel of the cloud color)
-    # Adding +25 ensures an absolute 10% bump on the 0-255 scale so it doesn't get too dark at night.
-    downlight_bri = int(min(255, max(cloud_color) + 25))
 
+    # ==========================================
+    # 4. SEGMENT 3: AFTERBURNER SPATIAL MATH
+    # ==========================================
+    # target_x represents the sun's position from 0 (Sunrise) to 255 (Sunset)
+    r_base, g_base, b_base = 0, 0, 0
+    
+    if not is_night:
+        if target_x < 30:
+            # DAWN BUFFER: Matrix only. Afterburners wait.
+            pass
+        elif 30 <= target_x < 100:
+            # MORNING RAMP: East (Red pin) slowly ramps up to max.
+            r_base = int(((target_x - 30) / 70.0) * 255)
+        elif 100 <= target_x <= 155:
+            # HIGH NOON BLAST (Approx 2 hours): All RGB modules fire at 100%.
+            r_base, g_base, b_base = 255, 255, 255
+        elif 155 < target_x <= 225:
+            # AFTERNOON DESCENT: East and Noon fade out. West (Blue pin) takes over.
+            fade_ratio = 1.0 - ((target_x - 155) / 70.0)
+            r_base = int(255 * fade_ratio)
+            g_base = int(255 * fade_ratio)
+            b_base = 255
+        elif target_x > 225:
+            # DUSK BUFFER: West fades out roughly an hour before sunset.
+            fade_ratio = 1.0 - ((target_x - 225) / 30.0)
+            b_base = max(0, int(255 * fade_ratio))
+
+    # THE ALPHA FLOOR: Prevent weather from killing the tank exposure completely
+    min_exposure = 60
+    active_alpha = max(sun_alpha, min_exposure) if not is_night else 0
+    
+    # Apply alpha to final RGB values and clamp to 255
+    r = min(255, max(0, int((r_base * active_alpha) / 255)))
+    g = min(255, max(0, int((g_base * active_alpha) / 255)))
+    b = min(255, max(0, int((b_base * active_alpha) / 255)))
+
+    # SKY BOOST: If afterburners are firing hard, boost matrix sky so it isn't washed out
+    if not is_night and (r > 100 or g > 100 or b > 100):
+        # Bump the sky color brightness slightly
+        sky_color = [min(255, c + 30) for c in sky_color]
+
+    # ==========================================
+    # 5. BUILD THE MICRO-PAYLOAD
+    # ==========================================
+    # We strip out everything static (effects, palettes, relays) to prevent stream errors.
     payload = {
-      "on": True, "bri": global_bri, "transition": 200, "live": True,             
+      "bri": global_bri, 
+      "transition": 200,             
       "seg": [
-        # Segment 0: The Sky Engine
+        # Segment 0: The Sky Engine (Matrix)
         { 
           "id": 0, 
-          "bri": 255,
-          "fx": 142, 
-          "pal": 0, 
           "sx": target_x, 
           "ix": int(clouds * 2.55), 
           "c1": sun_alpha, 
           "col": [ sun_color, sky_color, cloud_color ] 
         },
-        
-        # Segment 1 & 2: Solid Downlights (Dynamic brightness + 10%)
-        { 
-          "id": 1, "on": True, "bri": downlight_bri, 
-          "fx": 88, "sx": 96, "ix": 224, "pal": 9, 
-          "col": [ [255, 255, 255], [0, 0, 0], [0, 0, 0] ] 
-        },
-        { 
-          "id": 2, "on": True, "bri": downlight_bri, 
-          "fx": 88, "sx": 96, "ix": 224, "pal": 9, 
-          "col": [ [255, 255, 255], [0, 0, 0], [0, 0, 0] ] 
-        },
-        
-        # Segment 4: The Air Curtain
-        { "id": 4, "on": True, "bri": 255, "fx": 83, "sx": 128, "ix": 128, "pal": 59, "col": [ [255, 255, 255], [0, 0, 0], [0, 0, 0] ] },
-        
-        # Segment 5: PWM Output
-        { "id": 5, "on": True },
-        
-        # Segment 6 & 7: Relays
-        { "id": 6, "on": True },
-        { "id": 7, "on": True }
+        # Segment 3: The 12V BD139 Afterburners
+        {
+          "id": 3,
+          "on": True,
+          "col": [ [r, g, b], [0, 0, 0], [0, 0, 0] ]
+        }
       ]
     }
     
-    # 5. CONSOLE LOGGING
+    # 6. CONSOLE LOGGING
     mode_name = "NIGHT" if is_night else "DAY"
-    print(f"[{mode_name}] Pos: {target_x}/255 | Alt: {alt:.1f}° | Temp: {temp}°C | Bri: {global_bri}/255")
-    if is_night: print(f"Moon Phase: {moon_phase*100:.1f}%")
-    print(f"Clouds: {clouds}% | Sky: {sky_color} | CloudColor: {cloud_color} | Sun/Moon Alpha: {sun_alpha}")
+    print(f"[{mode_name}] Pos: {target_x}/255 | Alt: {alt:.1f}° | Temp: {temp}°C")
+    print(f"Afterburners (RGB) -> East: {r} | Noon: {g} | West: {b} | Active Alpha: {active_alpha}")
     
-    # 6. PUSH TO MQTT
+    # 7. PUSH TO MQTT
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
             
@@ -140,7 +161,7 @@ def run_sky_engine():
         client.loop_start() 
         publish_result = client.publish(MQTT_TOPIC, json.dumps(payload), qos=1)
         publish_result.wait_for_publish(timeout=10)
-        print("Successfully published to MQTT.")
+        print("Successfully published micro-payload to MQTT.")
     except Exception as e:
         print(f"MQTT Connection failed: {e}")
     finally:
