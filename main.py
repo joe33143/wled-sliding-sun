@@ -125,14 +125,14 @@ def run_sky_engine():
     # ==========================================
     # 5. BUILD THE MICRO-PAYLOAD
     # ==========================================
-    # We strip out everything static (effects, palettes, relays) to prevent stream errors.
     payload = {
-      "bri": global_bri, 
+      "bri": 255,  # <-- FIX 1: Master valve forced wide open (No global double-dimming)
       "transition": 200,             
       "seg": [
         # Segment 0: The Sky Engine (Matrix)
         { 
           "id": 0, 
+          "bri": global_bri, # <-- FIX 2: Weather brightness is applied ONLY to the 5V matrix
           "sx": target_x, 
           "ix": int(clouds * 2.55), 
           "c1": sun_alpha, 
@@ -141,6 +141,7 @@ def run_sky_engine():
         # Segment 3: The 12V BD139 Afterburners
         {
           "id": 3,
+          "bri": 255, # <-- FIX 3: Segment brightness maxed out so Python's math passes through purely
           "on": True,
           "col": [ [r, g, b], [0, 0, 0], [0, 0, 0] ]
         }
