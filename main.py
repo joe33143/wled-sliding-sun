@@ -126,27 +126,62 @@ def run_sky_engine():
     # 5. BUILD THE MICRO-PAYLOAD
     # ==========================================
     payload = {
-      "bri": 255,  # <-- FIX 1: Master valve forced wide open (No global double-dimming)
-      "transition": 200,             
+      "on": True,
+      "bri": 255,  # Master valve forced wide open
+      "transition": 200,
+      "mainseg": 3,
       "seg": [
-        # Segment 0: The Sky Engine (Matrix)
+        # ------------------------------------------
+        # Segment 0: SUN (Transparent background over clouds)
+        # ------------------------------------------
         { 
           "id": 0, 
-          "bri": global_bri, # <-- FIX 2: Weather brightness is applied ONLY to the 5V matrix
-          "sx": target_x, 
-          "ix": int(clouds * 2.55), 
-          "c1": sun_alpha, 
-          "col": [ sun_color, sky_color, cloud_color ] 
+          "on": True,
+          "bri": global_bri, 
+          "fx": 142,
+          "sx": target_x,         # Python controls sun position
+          "ix": 255, 
+          "tp": True,             # Critical: Allows Layer 1 (Clouds) to show through
+          "pal": 0,
+          "col": [ sun_color, [0,0,0], [0,0,0] ] 
         },
-        # Segment 3: The 12V BD139 Afterburners
+        # ------------------------------------------
+        # Segment 1: CLOUD & SKY BACKGROUND
+        # ------------------------------------------
+        {
+          "id": 1,
+          "on": True,
+          "bri": global_bri,
+          "fx": 220,
+          "sx": 166,
+          "ix": int(clouds * 2.55), # Python maps live weather cloud cover to effect intensity
+          "pal": 28,                # Uses your selected WLED palette
+          "col": [ sky_color, cloud_color, [0,0,0] ] # Fallback if palette is disabled
+        },
+        # ------------------------------------------
+        # Segment 2: 12V BD139 AFTERBURNERS
+        # ------------------------------------------
+        {
+          "id": 2,
+          "on": True,
+          "bri": 255, # Maxed out so Python's math passes through purely
+          "fx": 0,
+          "col": [ [r, g, b], [0, 0, 0], [0, 0, 0] ]
+        },
+        # ------------------------------------------
+        # Segment 3: AIR CURTAIN (Static)
+        # ------------------------------------------
         {
           "id": 3,
-          "bri": 255, # <-- FIX 3: Segment brightness maxed out so Python's math passes through purely
           "on": True,
-          "col": [ [r, g, b], [0, 0, 0], [0, 0, 0] ]
+          "bri": 35, 
+          "fx": 0,
+          "sel": True,
+          "col": [ [255, 0, 0], [0, 0, 0], [0, 0, 0] ]
         }
       ]
     }
+
     
     # 6. CONSOLE LOGGING
     mode_name = "NIGHT" if is_night else "DAY"
