@@ -108,8 +108,8 @@ def run_sky_engine():
             fade_ratio = 1.0 - ((target_x - 225) / 30.0)
             b_base = max(0, int(255 * fade_ratio))
 
-    # THE ALPHA FLOOR: Prevent weather from killing the tank exposure completely
-    min_exposure = 60
+    # THE ALPHA FLOOR: Prevent weather from starving the tank of light
+    min_exposure = 120  # Increased from 60. Keeps afterburners at ~47% minimum during daytime storms/overcast.
     active_alpha = max(sun_alpha, min_exposure) if not is_night else 0
     
     # Apply alpha to final RGB values and clamp to 255
@@ -117,10 +117,15 @@ def run_sky_engine():
     g = min(255, max(0, int((g_base * active_alpha) / 255)))
     b = min(255, max(0, int((b_base * active_alpha) / 255)))
 
-    # SKY BOOST: If afterburners are firing hard, boost matrix sky so it isn't washed out
-    if not is_night and (r > 100 or g > 100 or b > 100):
-        # Bump the sky color brightness slightly
-        sky_color = [min(255, c + 30) for c in sky_color]
+    # SKY BOOST: Protect the matrix from looking dead during heavy overcast or high afterburner usage
+    if not is_night:
+        if clouds > 90:
+            # Overcast safety net: Force the matrix to stay reasonably bright (e.g., 140/255)
+            global_bri = max(global_bri, 140)
+            
+        if (r > 100 or g > 100 or b > 100):
+            # Afterburner safety net: Bump the sky color slightly so it isn't washed out by the 12V LEDs
+            sky_color = [min(255, c + 30) for c in sky_color]
 
     # ==========================================
     # 5. BUILD THE MICRO-PAYLOAD
