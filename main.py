@@ -84,47 +84,36 @@ def run_sky_engine():
     # ==========================================
     # 4. SEGMENT 3: AFTERBURNER SPATIAL MATH
     # ==========================================
-    # target_x represents the sun's position from 0 (Sunrise) to 255 (Sunset)
     r_base, g_base, b_base = 0, 0, 0
     
     if not is_night:
         if target_x < 30:
-            # DAWN BUFFER: Matrix only. Afterburners wait.
             pass
         elif 30 <= target_x < 100:
-            # MORNING RAMP: East (Red pin) slowly ramps up to max.
             r_base = int(((target_x - 30) / 70.0) * 255)
         elif 100 <= target_x <= 155:
-            # HIGH NOON BLAST (Approx 2 hours): All RGB modules fire at 100%.
             r_base, g_base, b_base = 255, 255, 255
         elif 155 < target_x <= 225:
-            # AFTERNOON DESCENT: East and Noon fade out. West (Blue pin) takes over.
             fade_ratio = 1.0 - ((target_x - 155) / 70.0)
             r_base = int(255 * fade_ratio)
             g_base = int(255 * fade_ratio)
             b_base = 255
         elif target_x > 225:
-            # DUSK BUFFER: West fades out roughly an hour before sunset.
             fade_ratio = 1.0 - ((target_x - 225) / 30.0)
             b_base = max(0, int(255 * fade_ratio))
 
-    # THE ALPHA FLOOR: Prevent weather from starving the tank of light
-    min_exposure = 120  # Increased from 60. Keeps afterburners at ~47% minimum during daytime storms/overcast.
+    min_exposure = 120  
     active_alpha = max(sun_alpha, min_exposure) if not is_night else 0
     
-    # Apply alpha to final RGB values and clamp to 255
     r = min(255, max(0, int((r_base * active_alpha) / 255)))
     g = min(255, max(0, int((g_base * active_alpha) / 255)))
     b = min(255, max(0, int((b_base * active_alpha) / 255)))
 
-    # SKY BOOST: Protect the matrix from looking dead during heavy overcast or high afterburner usage
     if not is_night:
         if clouds > 90:
-            # Overcast safety net: Force the matrix to stay reasonably bright (e.g., 140/255)
             global_bri = max(global_bri, 140)
             
         if (r > 100 or g > 100 or b > 100):
-            # Afterburner safety net: Bump the sky color slightly so it isn't washed out by the 12V LEDs
             sky_color = [min(255, c + 30) for c in sky_color]
 
     # ==========================================
@@ -132,46 +121,40 @@ def run_sky_engine():
     # ==========================================
     payload = {
       "on": True,
-      "bri": 255,  # Master valve forced wide open
+      "bri": 255,  
       "transition": 200,
-      "mainseg": 3,
+      "mainseg": 0,
       "seg": [
         # ------------------------------------------
-        # Segment 0: SUN (Transparent background over clouds)
+        # Segment 0: THE UNIFIED MATRIX ENGINE
         # ------------------------------------------
         { 
           "id": 0, 
           "on": True,
           "bri": global_bri, 
-          "fx": 142,
-          "sx": target_x,         # Python controls sun position
-          "ix": 255, 
-          "tp": True,             # Critical: Allows Layer 1 (Clouds) to show through
-          "pal": 0,
-          "col": [ sun_color, [0,0,0], [0,0,0] ] 
+          "sx": target_x,             # Slider 1: Drives Sun Position
+          "ix": int(clouds * 2.55),   # Slider 2: Drives Cloud Density
+          "c1": active_alpha          # Slider 3: Drops Sun visibility at night
+          # "fx", "col", and "pal" are intentionally omitted to protect your manual UI color selections
         },
         # ------------------------------------------
-        # Segment 1: CLOUD & SKY BACKGROUND
+        # Segment 1: DISABLED
         # ------------------------------------------
         {
           "id": 1,
-          "on": True,
-          "bri": global_bri,
-          "fx": 220,
-          "sx": 166,
-          "ix": int(clouds * 2.55), # Python maps live weather cloud cover to effect intensity
-          "pal": 28,                # Uses your selected WLED palette
-          "col": [ sky_color, cloud_color, [0,0,0] ] # Fallback if palette is disabled
+          "on": False,
+          "stop": 0
         },
         # ------------------------------------------
-        # Segment 2: 12V BD139 AFTERBURNERS
+        # Segment 2: REEF AFTERBURNER (12V BD139)
         # ------------------------------------------
         {
           "id": 2,
           "on": True,
-          "bri": 255, # Maxed out so Python's math passes through purely
-          "fx": 0,
-          "col": [ [r, g, b], [0, 0, 0], [0, 0, 0] ]
+          "bri": 255,
+          # Pushes the daily East (R) -> Noon (G) -> West (B) trajectory to the Primary Color slot.
+          # C++ reads this baseline and applies the weather shadows on top.
+          "col": [ [r, g, b] ]
         },
         # ------------------------------------------
         # Segment 3: AIR CURTAIN (Static)
@@ -180,13 +163,10 @@ def run_sky_engine():
           "id": 3,
           "on": True,
           "bri": 35, 
-          "fx": 0,
-          "sel": True,
-          "col": [ [255, 0, 0], [0, 0, 0], [0, 0, 0] ]
+          "col": [ [255, 0, 0] ]
         }
       ]
     }
-
     
     # 6. CONSOLE LOGGING
     mode_name = "NIGHT" if is_night else "DAY"
