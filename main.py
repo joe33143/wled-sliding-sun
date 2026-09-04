@@ -80,13 +80,23 @@ def run_sky_engine():
         target_x = calculate_position(now, s_today["sunrise"], s_today["sunset"])
         global_bri, sun_color, sky_color, cloud_color, sun_alpha = day_effects.get_day_payload(alt, temp, clouds, is_stormy)
 
-
     # ==========================================
-    # 4. WEATHER BRIGHTNESS & AFTERBURNER MATH
+    # 4. WEATHER BRIGHTNESS, AFTERBURNER MATH & TIME PROFILES
     # ==========================================
-    r_base, g_base, b_base = 0, 0, 0
+    evening_start = s_today["sunset"]
+    evening_end = now.replace(hour=21, minute=30, second=0, microsecond=0)
+    if evening_end < evening_start: 
+        evening_end += datetime.timedelta(days=1)
+        
+    seconds_past_sunset = (now - evening_start).total_seconds()
     
     if not is_night:
+        # --- DAYTIME MATH ---
+        master_bri = 255
+        matrix_bri = 255
+        active_pal = 0
+        
+        r_base, g_base, b_base = 0, 0, 0
         if target_x < 30:
             pass
         elif 30 <= target_x < 100:
@@ -102,35 +112,68 @@ def run_sky_engine():
             fade_ratio = 1.0 - ((target_x - 225) / 30.0)
             b_base = max(0, int(255 * fade_ratio))
 
-    # STRICT SCALING: 30% Cloudy -> 70% Brightness | 100% Cloudy -> 30% Brightness Floor
-    if clouds >= 100:
-        weather_scale = 0.30
-    elif clouds <= 30:
-        weather_scale = 0.70
-    else:
-        weather_scale = 0.70 - ((clouds - 30) / 70.0) * 0.40
-    
-    # Scale the 12V Afterburners
-    dynamic_alpha = int(255 * weather_scale)
-    active_alpha = dynamic_alpha if not is_night else 0
-    
-    r = min(255, max(0, int((r_base * active_alpha) / 255)))
-    g = min(255, max(0, int((g_base * active_alpha) / 255)))
-    b = min(255, max(0, int((b_base * active_alpha) / 255)))
+        # Weather Scaling
+        if clouds >= 100:
+            weather_scale = 0.30
+        elif clouds <= 30:
+            weather_scale = 0.70
+        else:
+            weather_scale = 0.70 - ((clouds - 30) / 70.0) * 0.40
+            
+        active_alpha = int(255 * weather_scale)
+        r = min(255, max(0, int((r_base * active_alpha) / 255)))
+        g = min(255, max(0, int((g_base * active_alpha) / 255)))
+        b = min(255, max(0, int((b_base * active_alpha) / 255)))
 
-    # THE FIX: Only apply weather dimming during the day.
-    # At night, pass the values from night_effects.py straight through.
-    if not is_night:
         final_sky = [min(255, max(0, int(c * weather_scale))) for c in sky_color]
         final_cloud = [min(255, max(0, int(c * weather_scale))) for c in cloud_color]
+
+    elif 0 <= seconds_past_sunset <= (45 * 60):
+        # --- SUNSET RAMP (0 to 45 mins after sunset) ---
+        # Smoothly fades from Daytime values into the User's Evening JSON Profile
+        t = seconds_past_sunset / (45.0 * 60.0)
+        
+        master_bri = int(255 + (127 - 255) * t)
+        matrix_bri = int(255 + (173 - 255) * t)
+        active_pal = 9
+        active_alpha = 255
+        
+        final_sky = [int(sky_color[i] * (1 - t) + 0 * t) for i in range(3)]
+        final_cloud = [int(cloud_color[i] * (1 - t) + 36 * t) for i in range(3)]
+        sun_color = [int(sun_color[i] * (1 - t) + 255 * t) for i in range(3)]
+        
+        r = int(0 + (8 - 0) * t)
+        g = int(0 + (255 - 0) * t)
+        b = int(0 + (0 - 0) * t)
+        
+    elif evening_start <= now <= evening_end:
+        # --- EVENING PROFILE (Locked until 9:30 PM) ---
+        # Injects the exact JSON profile provided
+        master_bri = 127
+        matrix_bri = 173
+        active_pal = 9
+        active_alpha = 255
+        
+        final_sky = [0, 0, 0]
+        final_cloud = [36, 36, 36]
+        sun_color = [255, 255, 255]
+        
+        r, g, b = 8, 255, 0
+        
     else:
+        # --- DEEP NIGHT (9:30 PM to Sunrise) ---
+        master_bri = global_bri 
+        matrix_bri = 255
+        active_pal = 0
+        active_alpha = sun_alpha
+        
         final_sky = sky_color
         final_cloud = cloud_color
+        r, g, b = 0, 0, 0
 
     # ==========================================
-    # 5. BUILD THE MICRO-PAYLOADS
+    # 5. BUILD THE MICRO-PAYLOADS (Two-Step Delivery)
     # ==========================================
-    
     payload_preset = {
         "on": True,
         "ps": 1
@@ -138,6 +181,7 @@ def run_sky_engine():
 
     payload_data = {
       "on": True,
+      "bri": master_bri,          # Allows Python to set global bri (127 during Evening)
       "transition": 200,
       "seg": [
         # ------------------------------------------
@@ -146,11 +190,11 @@ def run_sky_engine():
         { 
           "id": 0, 
           "on": True,
-          "bri": 255,                 
+          "bri": matrix_bri,          # Matrix-specific brightness (173 during Evening)
           "sx": target_x,             
           "ix": int(clouds * 2.55),   
-          "c1": active_alpha if not is_night else sun_alpha, # Use night module's moon alpha
-          "pal": 0,                   
+          "c1": active_alpha,         
+          "pal": active_pal,          # Dynamically switches to Palette 9 at sunset      
           "col": [ final_sky, final_cloud, sun_color ] 
         },
         # ------------------------------------------
@@ -159,17 +203,25 @@ def run_sky_engine():
         {
           "id": 2,
           "on": True,
+          "bri": 255,
           "col": [ [r, g, b] ]
         }
       ]
     }
     
     # 6. CONSOLE LOGGING
-    mode_name = "NIGHT" if is_night else "DAY"
+    if 0 <= seconds_past_sunset <= (45 * 60):
+        mode_name = "SUNSET RAMP"
+    elif evening_start <= now <= evening_end:
+        mode_name = "EVENING JSON PROFILE"
+    elif is_night:
+        mode_name = "DEEP NIGHT"
+    else:
+        mode_name = "DAY"
+        
     print(f"[{mode_name}] Pos: {target_x}/255 | Alt: {alt:.1f}° | Temp: {temp}°C | Clouds: {clouds}%")
-    if not is_night:
-        print(f"Weather Scale: {weather_scale:.2f} (Applied to Sky & Clouds)")
-    print(f"Matrix Output -> Sky: {final_sky} | Cloud: {final_cloud} | Moon/Sun Alpha: {payload_data['seg'][0]['c1']}")
+    print(f"Master Bri: {master_bri} | Matrix Bri: {matrix_bri} | Palette: {active_pal}")
+    print(f"Matrix Output -> Sky: {final_sky} | Cloud: {final_cloud} | Moon/Sun: {sun_color}")
     print(f"Afterburners (RGB) -> East: {r} | Noon: {g} | West: {b}")
 
     # 7. PUSH TO MQTT
@@ -183,7 +235,7 @@ def run_sky_engine():
         client.publish(MQTT_TOPIC, json.dumps(payload_preset), qos=1)
         time.sleep(0.5)
         client.publish(MQTT_TOPIC, json.dumps(payload_data), qos=1)
-        print("Successfully published live weather overrides to MQTT.")
+        print("Successfully published live overrides to MQTT.")
         
     except Exception as e:
         print(f"MQTT Connection failed: {e}")
