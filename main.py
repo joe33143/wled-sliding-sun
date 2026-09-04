@@ -108,7 +108,6 @@ def run_sky_engine():
     elif clouds <= 30:
         weather_scale = 0.70
     else:
-        # Smoothly interpolates the gap between 30% and 100% clouds
         weather_scale = 0.70 - ((clouds - 30) / 70.0) * 0.40
     
     # Scale the 12V Afterburners
@@ -119,21 +118,24 @@ def run_sky_engine():
     g = min(255, max(0, int((g_base * active_alpha) / 255)))
     b = min(255, max(0, int((b_base * active_alpha) / 255)))
 
-    # Dim BOTH the Sky and Cloud RGB values using the new weather scale
-    dimmed_sky = [min(255, max(0, int(c * weather_scale))) for c in sky_color]
-    dimmed_cloud = [min(255, max(0, int(c * weather_scale))) for c in cloud_color]
+    # THE FIX: Only apply weather dimming during the day.
+    # At night, pass the values from night_effects.py straight through.
+    if not is_night:
+        final_sky = [min(255, max(0, int(c * weather_scale))) for c in sky_color]
+        final_cloud = [min(255, max(0, int(c * weather_scale))) for c in cloud_color]
+    else:
+        final_sky = sky_color
+        final_cloud = cloud_color
 
     # ==========================================
-    # 5. BUILD THE MICRO-PAYLOADS (Two-Step Delivery)
+    # 5. BUILD THE MICRO-PAYLOADS
     # ==========================================
     
-    # STEP 1: Turn system on and load Preset 1
     payload_preset = {
         "on": True,
         "ps": 1
     }
 
-    # STEP 2: Apply live overrides 0.5 seconds later
     payload_data = {
       "on": True,
       "transition": 200,
@@ -144,12 +146,12 @@ def run_sky_engine():
         { 
           "id": 0, 
           "on": True,
-          "bri": 255,                 # Master segment brightness stays 100%
+          "bri": 255,                 
           "sx": target_x,             
           "ix": int(clouds * 2.55),   
-          "c1": active_alpha,         
+          "c1": active_alpha if not is_night else sun_alpha, # Use night module's moon alpha
           "pal": 0,                   
-          "col": [ dimmed_sky, dimmed_cloud, sun_color ] # Pushes the scaled colors
+          "col": [ final_sky, final_cloud, sun_color ] 
         },
         # ------------------------------------------
         # Segment 2: REEF AFTERBURNER (12V BD139)
@@ -165,10 +167,12 @@ def run_sky_engine():
     # 6. CONSOLE LOGGING
     mode_name = "NIGHT" if is_night else "DAY"
     print(f"[{mode_name}] Pos: {target_x}/255 | Alt: {alt:.1f}° | Temp: {temp}°C | Clouds: {clouds}%")
-    print(f"Weather Scale: {weather_scale:.2f} (Applies to Sky & Clouds)")
-    print(f"Afterburners (RGB) -> East: {r} | Noon: {g} | West: {b} | Active Alpha: {active_alpha}")
+    if not is_night:
+        print(f"Weather Scale: {weather_scale:.2f} (Applied to Sky & Clouds)")
+    print(f"Matrix Output -> Sky: {final_sky} | Cloud: {final_cloud} | Moon/Sun Alpha: {payload_data['seg'][0]['c1']}")
+    print(f"Afterburners (RGB) -> East: {r} | Noon: {g} | West: {b}")
 
-    # 7. PUSH TO MQTT (Two-Stage Transmission)
+    # 7. PUSH TO MQTT
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
             
@@ -176,14 +180,8 @@ def run_sky_engine():
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
         client.loop_start() 
         
-        # Fire the preset
         client.publish(MQTT_TOPIC, json.dumps(payload_preset), qos=1)
-        print("Fired Preset 1...")
-        
-        # Give WLED memory half a second to load the preset without crashing
         time.sleep(0.5)
-        
-        # Fire the weather overrides
         client.publish(MQTT_TOPIC, json.dumps(payload_data), qos=1)
         print("Successfully published live weather overrides to MQTT.")
         
