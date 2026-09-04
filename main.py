@@ -82,7 +82,7 @@ def run_sky_engine():
 
 
     # ==========================================
-    # 4. SEGMENT 3: AFTERBURNER SPATIAL MATH
+    # 4. WEATHER BRIGHTNESS & AFTERBURNER MATH
     # ==========================================
     r_base, g_base, b_base = 0, 0, 0
     
@@ -102,68 +102,42 @@ def run_sky_engine():
             fade_ratio = 1.0 - ((target_x - 225) / 30.0)
             b_base = max(0, int(255 * fade_ratio))
 
-    min_exposure = 120  
-    active_alpha = max(sun_alpha, min_exposure) if not is_night else 0
+    # STRICT BRIGHTNESS SCALING: 70% (Clear) down to 30% (100% Overcast)
+    cloud_ratio = clouds / 100.0
+    dynamic_brightness = int(255 * (0.70 - (cloud_ratio * 0.40)))
+    
+    global_bri = dynamic_brightness 
+    active_alpha = dynamic_brightness if not is_night else 0
     
     r = min(255, max(0, int((r_base * active_alpha) / 255)))
     g = min(255, max(0, int((g_base * active_alpha) / 255)))
     b = min(255, max(0, int((b_base * active_alpha) / 255)))
 
-    if not is_night:
-        if clouds > 90:
-            global_bri = max(global_bri, 140)
-            
-        if (r > 100 or g > 100 or b > 100):
-            sky_color = [min(255, c + 30) for c in sky_color]
-
     # ==========================================
-    # 5. BUILD THE MICRO-PAYLOAD
+    # 5. BUILD THE MICRO-PAYLOAD (Using Preset 1)
     # ==========================================
     payload = {
+      "ps": 1,         # Loads Preset 1 first to restore your manual UI states
       "on": True,
-      "bri": 255,  
       "transition": 200,
-      "mainseg": 0,
       "seg": [
         # ------------------------------------------
         # Segment 0: THE UNIFIED MATRIX ENGINE
         # ------------------------------------------
         { 
           "id": 0, 
-          "on": True,
-          "bri": global_bri, 
-          "sx": target_x,             # Slider 1: Drives Sun Position
-          "ix": int(clouds * 2.55),   # Slider 2: Drives Cloud Density
+          "bri": global_bri,          # Matrix dims from 70% to 30% based on weather
+          "sx": target_x,             # Slider 1: Sun Position
+          "ix": int(clouds * 2.55),   # Slider 2: Cloud Density
           "c1": active_alpha          # Slider 3: Drops Sun visibility at night
-          # "fx", "col", and "pal" are intentionally omitted to protect your manual UI color selections
-        },
-        # ------------------------------------------
-        # Segment 1: DISABLED
-        # ------------------------------------------
-        {
-          "id": 1,
-          "on": False,
-          "stop": 0
         },
         # ------------------------------------------
         # Segment 2: REEF AFTERBURNER (12V BD139)
         # ------------------------------------------
         {
           "id": 2,
-          "on": True,
-          "bri": 255,
-          # Pushes the daily East (R) -> Noon (G) -> West (B) trajectory to the Primary Color slot.
-          # C++ reads this baseline and applies the weather shadows on top.
+          # Passes the calculated RGB base out to C++ 
           "col": [ [r, g, b] ]
-        },
-        # ------------------------------------------
-        # Segment 3: AIR CURTAIN (Static)
-        # ------------------------------------------
-        {
-          "id": 3,
-          "on": True,
-          "bri": 35, 
-          "col": [ [255, 0, 0] ]
         }
       ]
     }
