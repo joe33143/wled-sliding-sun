@@ -87,7 +87,7 @@ def run_sky_engine():
         phase = "DEEP_NIGHT"
 
     # ==========================================
-    # CALCULATE RAW VALUES BASED ON TIME OF DAY
+    # PHASE LOGIC & VALUE ASSIGNMENT
     # ==========================================
     if phase == "DAY":
         target_x = calculate_position(now, s_today["sunrise"], s_today["sunset"])
@@ -100,7 +100,7 @@ def run_sky_engine():
             
         active_alpha = int(255 * weather_scale)
         
-        # Afterburner Spatial Math
+        # Afterburner Math
         r_base, g_base, b_base = 0, 0, 0
         if 30 <= target_x < 100:
             r_base = int(((target_x - 30) / 70.0) * 255)
@@ -116,130 +116,108 @@ def run_sky_engine():
         ab_g = min(255, max(0, int((g_base * active_alpha) / 255)))
         ab_b = min(255, max(0, int((b_base * active_alpha) / 255)))
 
-        c_bri = 255
-        c_pal = 0
+        master_bri = 255
+        seg0_bri = 255
+        sun_pos = target_x
+        cloud_ix = int(clouds * 2.55)
+        sun_alpha = active_alpha
+        active_pal = 59  # Daytime Palette from your JSON
         
-        c_sky = [min(255, max(0, int(c * weather_scale))) for c in raw_sky]
-        c_cloud = [min(255, max(0, int(c * weather_scale))) for c in raw_cloud]
-        c_sun = raw_sun
-        c_ix = int(clouds * 2.55)
+        sky_col = [min(255, max(0, int(c * weather_scale))) for c in raw_sky]
+        afterburner_col = [ab_r, ab_g, ab_b]
 
     elif phase == "SUNSET_FADE":
         _, a_sun, a_sky, a_cloud, a_alpha = day_effects.get_day_payload(0.0, temp, clouds, is_stormy)
         t = (now - sunset_time).total_seconds() / (45.0 * 60.0)
         
-        c_bri = lerp(255, 173, t)
-        target_x = lerp(255, 128, t)
-        c_ix = lerp(int(clouds * 2.55), 171, t)
-        active_alpha = lerp(a_alpha, 255, t)
-        c_pal = 9 
+        master_bri = lerp(255, 127, t)
+        seg0_bri = lerp(255, 173, t)
+        sun_pos = lerp(255, 128, t)
+        cloud_ix = lerp(int(clouds * 2.55), 171, t)
+        sun_alpha = lerp(a_alpha, 255, t)
+        active_pal = 9  # Evening Palette from your JSON
         
-        c_sky = lerp_color(a_sky, [0, 0, 0], t)
-        c_cloud = lerp_color(a_cloud, [36, 36, 36], t)
-        c_sun = lerp_color(a_sun, [255, 255, 255], t)
-        
-        ab_r, ab_g, ab_b = lerp_color([0, 0, 0], [8, 255, 0], t)
+        sky_col = lerp_color(a_sky, [0, 0, 0], t)
+        afterburner_col = lerp_color([0, 0, 0], [8, 255, 0], t)
 
     elif phase == "EVENING_LOCKED":
-        c_bri = 173
-        target_x = 128
-        c_ix = 171
-        c_pal = 9
-        active_alpha = 255
+        master_bri = 127
+        seg0_bri = 173
+        sun_pos = 128
+        cloud_ix = 171
+        sun_alpha = 255
+        active_pal = 9
         
-        c_sky = [0, 0, 0]
-        c_cloud = [36, 36, 36]
-        c_sun = [255, 255, 255]
-        ab_r, ab_g, ab_b = 8, 255, 0
+        sky_col = [0, 0, 0]
+        afterburner_col = [8, 255, 0]
 
     elif phase == "DEEP_NIGHT":
         yesterday_sunset = sun(city.observer, date=datetime.date.today() - datetime.timedelta(days=1), tzinfo=city.timezone)["sunset"]
         target_x = calculate_position(now, yesterday_sunset, s_today["sunrise"]) if now < s_today["sunrise"] else calculate_position(now, s_today["sunset"], s_tomorrow["sunrise"])
         
-        c_bri, c_sun, c_sky, c_cloud, active_alpha = night_effects.get_night_payload(moon_phase, clouds, is_stormy)
-        c_ix = int(clouds * 2.55)
-        c_pal = 0
-        ab_r, ab_g, ab_b = 0, 0, 0
-
-    # ====================================================
-    # ASSIGN VARIABLES FOR YOUR CUSTOM PAYLOAD
-    # ====================================================
-    wled_transition = 70
-    
-    # --- Segment 0 (Sun Layer) ---
-    sun_bri = c_bri
-    sun_pos = target_x
-    sun_alpha = active_alpha
-    
-    # --- Segment 1 (Cloud/Sky Layer) ---
-    cloud_bri = c_bri
-    sky_col = c_sky + [0]    # Appending 0 for White channel compatibility
-    cloud_col = c_cloud + [0]
-    col3 = c_sun + [0]
-    cloud_fx = 142
-    cloud_sx = target_x
-    cloud_ix = c_ix
-    pal = c_pal
-    
-    # --- Segment 2 (Afterburners) ---
-    # Overriding with your requested dynamic colors (or hardcode [8,255,0,0] if you prefer)
-    afterburner_col = [ab_r, ab_g, ab_b, 0]
-    
-    # --- Segment 3 (Tank/Curtain) ---
-    tank_bri = 116 if not (phase == "DEEP_NIGHT") else 0
-    exp_col1 = [0, 0, 0, 0]
-    exp_col2 = [0, 0, 0, 0]
-    exp_col3 = [0, 0, 0, 0]
-    exp_fx = 0
-    exp_sx = 166
-    exp_ix = 152
-    exp_pal = 30
+        c_bri, c_sun, c_sky, c_cloud, n_alpha = night_effects.get_night_payload(moon_phase, clouds, is_stormy)
+        
+        master_bri = c_bri
+        seg0_bri = 255
+        sun_pos = target_x
+        cloud_ix = int(clouds * 2.55)
+        sun_alpha = n_alpha
+        active_pal = 0
+        
+        sky_col = c_sky
+        afterburner_col = [0, 0, 0]
 
     # ----------------------------------------------------
-    # --- BUILD JSON PAYLOAD (Your Exact Structure) ---
+    # --- BUILD JSON PAYLOAD (Matches your dump exactly) ---
     # ----------------------------------------------------
     payload = {
-        "on": True, 
-        "bri": 255, 
-        "transition": wled_transition, 
+        "on": True,
+        "bri": master_bri, 
+        "transition": 7,  # Matched from your dump
+        "mainseg": 0,
         "seg": [
             {
-                "id": 0, 
-                "on": sun_bri > 0, 
-                "bri": sun_bri,
-                "col": [[255, 255, 255, 0], [0, 0, 0, 0], [0, 0, 0, 0]], 
-                "cct": 127,
-                "fx": 255, "sx": sun_pos, "ix": sun_alpha, "pal": 0 
+                "id": 0,
+                "on": True,
+                "bri": seg0_bri,
+                "n": "Sun",
+                "col": [ sky_col, [0, 0, 0], [255, 255, 255] ], 
+                "fx": 142,
+                "sx": sun_pos,
+                "ix": cloud_ix,
+                "pal": active_pal,
+                "c1": sun_alpha
             },
             {
-                "id": 1, 
-                "on": cloud_bri > 0, 
-                "bri": cloud_bri, 
-                "col": [sky_col, cloud_col, col3], 
-                "cct": 127,  
-                "fx": cloud_fx, "sx": cloud_sx, "ix": cloud_ix, "pal": pal 
+                "id": 1,
+                "on": False,
+                "bri": 116,
+                "n": "Curtain",
+                "col": [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
+                "fx": 0,
+                "sx": 166,
+                "ix": 152,
+                "pal": 30
             },
             {
-                "id": 2, 
+                "id": 2,
                 "on": True,
                 "bri": 255,
-                "col": [afterburner_col, [0, 0, 0, 0], [0, 0, 0, 0]], 
-                "cct": 127,  
-                "fx": 0, "sx": 128, "ix": 128, "pal": 0
-            },
-            {
-                "id": 3, 
-                "on": tank_bri > 0,
-                "bri": tank_bri,
-                "col": [exp_col1, exp_col2, exp_col3], 
-                "cct": 127,  
-                "fx": exp_fx, "sx": exp_sx, "ix": exp_ix, "pal": exp_pal
+                "n": "Afterburner",
+                "col": [ afterburner_col, [0, 0, 0], [0, 0, 0] ],
+                "fx": 169,
+                "sx": 128,
+                "ix": 128,
+                "pal": 0
             }
         ]
     }
 
     # --- PUSH TO MQTT ---
-    print(f"[{phase}] Outputting custom layout payload...")
+    print(f"[{phase}] Pos: {sun_pos} | Clouds: {clouds}%")
+    print(f"Master Bri: {master_bri} | Seg 0 Bri: {seg0_bri} | Palette: {active_pal}")
+    print(f"Pushing mapped 3-segment JSON layout...")
+    
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
             
@@ -257,3 +235,4 @@ def run_sky_engine():
 
 if __name__ == "__main__":
     run_sky_engine()
+    
