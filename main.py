@@ -81,7 +81,7 @@ def run_sky_engine():
         global_bri, sun_color, sky_color, cloud_color, sun_alpha = day_effects.get_day_payload(alt, temp, clouds, is_stormy)
 
 
-        # ==========================================
+    # ==========================================
     # 4. WEATHER BRIGHTNESS & AFTERBURNER MATH
     # ==========================================
     r_base, g_base, b_base = 0, 0, 0
@@ -102,25 +102,39 @@ def run_sky_engine():
             fade_ratio = 1.0 - ((target_x - 225) / 30.0)
             b_base = max(0, int(255 * fade_ratio))
 
-    # STRICT SCALING: 70% (Clear) down to 30% (100% Overcast)
-    cloud_ratio = clouds / 100.0
-    scale_factor = 0.70 - (cloud_ratio * 0.40)
+    # STRICT SCALING: 30% Cloudy -> 70% Brightness | 100% Cloudy -> 30% Brightness Floor
+    if clouds >= 100:
+        weather_scale = 0.30
+    elif clouds <= 30:
+        weather_scale = 0.70
+    else:
+        # Smoothly interpolates the gap between 30% and 100% clouds
+        weather_scale = 0.70 - ((clouds - 30) / 70.0) * 0.40
     
     # Scale the 12V Afterburners
-    dynamic_alpha = int(255 * scale_factor)
+    dynamic_alpha = int(255 * weather_scale)
     active_alpha = dynamic_alpha if not is_night else 0
     
     r = min(255, max(0, int((r_base * active_alpha) / 255)))
     g = min(255, max(0, int((g_base * active_alpha) / 255)))
     b = min(255, max(0, int((b_base * active_alpha) / 255)))
 
-    # Dim ONLY the sky color's RGB values, leaving clouds and sun alone
-    dimmed_sky = [min(255, max(0, int(c * scale_factor))) for c in sky_color]
+    # Dim BOTH the Sky and Cloud RGB values using the new weather scale
+    dimmed_sky = [min(255, max(0, int(c * weather_scale))) for c in sky_color]
+    dimmed_cloud = [min(255, max(0, int(c * weather_scale))) for c in cloud_color]
 
     # ==========================================
-    # 5. BUILD THE MICRO-PAYLOAD 
+    # 5. BUILD THE MICRO-PAYLOADS (Two-Step Delivery)
     # ==========================================
-    payload = {
+    
+    # STEP 1: Turn system on and load Preset 1
+    payload_preset = {
+        "on": True,
+        "ps": 1
+    }
+
+    # STEP 2: Apply live overrides 0.5 seconds later
+    payload_data = {
       "on": True,
       "transition": 200,
       "seg": [
@@ -130,12 +144,12 @@ def run_sky_engine():
         { 
           "id": 0, 
           "on": True,
-          "bri": 255,                 # Master matrix brightness stays at 100% so clouds/sun stay bright
-          "sx": target_x,             # Slider 1: Sun Position
-          "ix": int(clouds * 2.55),   # Slider 2: Cloud Density
-          "c1": active_alpha,         # Slider 3: Drops Sun visibility at night
-          "pal": 0,                   # Forces "Colors Only" so we can decouple sky and clouds
-          "col": [ dimmed_sky, cloud_color, sun_color ] # Pushes the dynamically dimmed sky + bright clouds
+          "bri": 255,                 # Master segment brightness stays 100%
+          "sx": target_x,             
+          "ix": int(clouds * 2.55),   
+          "c1": active_alpha,         
+          "pal": 0,                   
+          "col": [ dimmed_sky, dimmed_cloud, sun_color ] # Pushes the scaled colors
         },
         # ------------------------------------------
         # Segment 2: REEF AFTERBURNER (12V BD139)
@@ -143,7 +157,6 @@ def run_sky_engine():
         {
           "id": 2,
           "on": True,
-          # Passes the calculated RGB base out to C++ 
           "col": [ [r, g, b] ]
         }
       ]
@@ -152,20 +165,28 @@ def run_sky_engine():
     # 6. CONSOLE LOGGING
     mode_name = "NIGHT" if is_night else "DAY"
     print(f"[{mode_name}] Pos: {target_x}/255 | Alt: {alt:.1f}° | Temp: {temp}°C | Clouds: {clouds}%")
-    print(f"Sky Color: {dimmed_sky} | Cloud Color: {cloud_color} | Sun Color: {sun_color}")
+    print(f"Weather Scale: {weather_scale:.2f} (Applies to Sky & Clouds)")
     print(f"Afterburners (RGB) -> East: {r} | Noon: {g} | West: {b} | Active Alpha: {active_alpha}")
 
-    
-    # 7. PUSH TO MQTT
+    # 7. PUSH TO MQTT (Two-Stage Transmission)
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
             
     try:
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
         client.loop_start() 
-        publish_result = client.publish(MQTT_TOPIC, json.dumps(payload), qos=1)
-        publish_result.wait_for_publish(timeout=10)
-        print("Successfully published micro-payload to MQTT.")
+        
+        # Fire the preset
+        client.publish(MQTT_TOPIC, json.dumps(payload_preset), qos=1)
+        print("Fired Preset 1...")
+        
+        # Give WLED memory half a second to load the preset without crashing
+        time.sleep(0.5)
+        
+        # Fire the weather overrides
+        client.publish(MQTT_TOPIC, json.dumps(payload_data), qos=1)
+        print("Successfully published live weather overrides to MQTT.")
+        
     except Exception as e:
         print(f"MQTT Connection failed: {e}")
     finally:
