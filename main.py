@@ -81,7 +81,7 @@ def run_sky_engine():
         global_bri, sun_color, sky_color, cloud_color, sun_alpha = day_effects.get_day_payload(alt, temp, clouds, is_stormy)
 
 
-    # ==========================================
+        # ==========================================
     # 4. WEATHER BRIGHTNESS & AFTERBURNER MATH
     # ==========================================
     r_base, g_base, b_base = 0, 0, 0
@@ -102,22 +102,25 @@ def run_sky_engine():
             fade_ratio = 1.0 - ((target_x - 225) / 30.0)
             b_base = max(0, int(255 * fade_ratio))
 
-    # STRICT BRIGHTNESS SCALING: 70% (Clear) down to 30% (100% Overcast)
+    # STRICT SCALING: 70% (Clear) down to 30% (100% Overcast)
     cloud_ratio = clouds / 100.0
-    dynamic_brightness = int(255 * (0.70 - (cloud_ratio * 0.40)))
+    scale_factor = 0.70 - (cloud_ratio * 0.40)
     
-    global_bri = dynamic_brightness 
-    active_alpha = dynamic_brightness if not is_night else 0
+    # Scale the 12V Afterburners
+    dynamic_alpha = int(255 * scale_factor)
+    active_alpha = dynamic_alpha if not is_night else 0
     
     r = min(255, max(0, int((r_base * active_alpha) / 255)))
     g = min(255, max(0, int((g_base * active_alpha) / 255)))
     b = min(255, max(0, int((b_base * active_alpha) / 255)))
 
+    # Dim ONLY the sky color's RGB values, leaving clouds and sun alone
+    dimmed_sky = [min(255, max(0, int(c * scale_factor))) for c in sky_color]
+
     # ==========================================
-    # 5. BUILD THE MICRO-PAYLOAD (Using Preset 1)
+    # 5. BUILD THE MICRO-PAYLOAD 
     # ==========================================
     payload = {
-      "ps": 1,         # Loads Preset 1 first to restore your manual UI states
       "on": True,
       "transition": 200,
       "seg": [
@@ -126,16 +129,20 @@ def run_sky_engine():
         # ------------------------------------------
         { 
           "id": 0, 
-          "bri": global_bri,          # Matrix dims from 70% to 30% based on weather
+          "on": True,
+          "bri": 255,                 # Master matrix brightness stays at 100% so clouds/sun stay bright
           "sx": target_x,             # Slider 1: Sun Position
           "ix": int(clouds * 2.55),   # Slider 2: Cloud Density
-          "c1": active_alpha          # Slider 3: Drops Sun visibility at night
+          "c1": active_alpha,         # Slider 3: Drops Sun visibility at night
+          "pal": 0,                   # Forces "Colors Only" so we can decouple sky and clouds
+          "col": [ dimmed_sky, cloud_color, sun_color ] # Pushes the dynamically dimmed sky + bright clouds
         },
         # ------------------------------------------
         # Segment 2: REEF AFTERBURNER (12V BD139)
         # ------------------------------------------
         {
           "id": 2,
+          "on": True,
           # Passes the calculated RGB base out to C++ 
           "col": [ [r, g, b] ]
         }
@@ -144,8 +151,10 @@ def run_sky_engine():
     
     # 6. CONSOLE LOGGING
     mode_name = "NIGHT" if is_night else "DAY"
-    print(f"[{mode_name}] Pos: {target_x}/255 | Alt: {alt:.1f}° | Temp: {temp}°C")
+    print(f"[{mode_name}] Pos: {target_x}/255 | Alt: {alt:.1f}° | Temp: {temp}°C | Clouds: {clouds}%")
+    print(f"Sky Color: {dimmed_sky} | Cloud Color: {cloud_color} | Sun Color: {sun_color}")
     print(f"Afterburners (RGB) -> East: {r} | Noon: {g} | West: {b} | Active Alpha: {active_alpha}")
+
     
     # 7. PUSH TO MQTT
     client_id = f"joe33143_sky_{int(time.time())}"
