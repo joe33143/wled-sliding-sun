@@ -64,15 +64,24 @@ def get_day_payload(alt, temp, clouds, is_stormy):
         progress = min(1.0, max(0.0, (clouds - 75) / 25.0))
         sun_alpha = int(lerp(100, 0, progress))
         global_bri = int(lerp(200, 150, progress)) if not is_stormy else 130
-        cloud_color = [15, 15, 15]     
+        
+        # FIX: Solid grey base so main.py math dims it cleanly without crushing it to zero
+        cloud_color = [180, 180, 190]     
+        
     elif clouds <= 35:
         sun_alpha = 255
         global_bri = 255
-        cloud_color = [27, 27, 27]  
+        
+        # FIX: Pure white base for sunny/clear days
+        cloud_color = [255, 255, 255]  
+        
     else:
         progress = (clouds - 35) / 40.0
         sun_alpha = int(lerp(255, 100, progress))
         global_bri = int(lerp(255, 200, progress))
-        cloud_color = [20, 20, 20] 
+        
+        # FIX: Light grey base for standard overcast
+        cloud_color = [220, 220, 225] 
 
     return global_bri, sun_color, sky_color, cloud_color, sun_alpha
+    
