@@ -102,7 +102,7 @@ def run_sky_engine():
         phase = "MORNING_RAMP"
     elif now < sunset_time:
         phase = "DAY"
-    elif now <= sunset_time + datetime.timedelta(minutes=45):
+    elif now <= sunset_time + datetime.timedelta(minutes=30):
         phase = "SUNSET_FADE"
     elif now_time < datetime.time(21, 0):
         phase = "EVENING_LOCKED"
@@ -166,9 +166,8 @@ def run_sky_engine():
         else:
             ab_val = 0
 
-        # Python-level Cutoffs
-        if clouds > 74.5: ab_val = 0  # Slider > 190 condition
-        if ab_val < 51: ab_val = 0    # 20% Floor rule
+        if clouds > 74.5: ab_val = 0  
+        if ab_val < 51: ab_val = 0    
         
         seg2_on = (ab_val > 0)
         master_bri, c_bri = 255, 255
@@ -180,17 +179,20 @@ def run_sky_engine():
 
     elif phase == "SUNSET_FADE":
         _, a_sun, a_sky, a_cloud, a_alpha = day_effects.get_day_payload(0.0, temp, clouds, is_stormy)
-        t = (now - sunset_time).total_seconds() / (45.0 * 60.0)
+        t = (now - sunset_time).total_seconds() / 1800.0  # 30-minute fade
         
         master_bri = lerp(255, 127, t)
         c_bri = lerp(255, 173, t)
         target_x = lerp(255, 128, t)
-        c_ix = lerp(int(clouds * 2.55), 171, t)
+        
+        # Cloud cover fades to 60% (153/255)
+        c_ix = lerp(int(clouds * 2.55), 153, t)
         active_alpha = lerp(a_alpha, 255, t)
         c_pal = 9 
         
         c_sky = lerp_color(a_sky, [0, 0, 0], t)
-        c_cloud = lerp_color(a_cloud, [36, 36, 36], t)
+        # Cloud color fades to black
+        c_cloud = lerp_color(a_cloud, [0, 0, 0], t)
         c_sun = lerp_color(a_sun, [255, 255, 255], t)
         
         ab_val = lerp(0, 255, t)
@@ -202,12 +204,12 @@ def run_sky_engine():
         master_bri = 127
         c_bri = 173
         target_x = 128
-        c_ix = 171
+        c_ix = 153  # Locked at 60% cloud cover
         active_alpha = 255
         c_pal = 9
         
         c_sky = [0, 0, 0]
-        c_cloud = [36, 36, 36]
+        c_cloud = [0, 0, 0]  # Locked at black
         c_sun = [255, 255, 255]
         
         ab_val = 255
@@ -292,7 +294,6 @@ def run_sky_engine():
 
     # --- PUSH TO MQTT ---
     print(f"[{phase}] Time: {now_time} | Clouds: {clouds}% | Moon Phase: {moon_phase:.2f}")
-    print(f"Afterburners -> Level: {ab_val}/255 | Active: {seg2_on}")
     
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
@@ -302,7 +303,7 @@ def run_sky_engine():
         client.loop_start() 
         publish_result = client.publish(MQTT_TOPIC, json.dumps(payload), qos=1)
         publish_result.wait_for_publish(timeout=10)
-        print("Successfully published pure-white afterburner payload.")
+        print("Successfully published payload.")
     except Exception as e:
         print(f"MQTT Connection failed: {e}")
     finally:
