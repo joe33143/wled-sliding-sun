@@ -72,8 +72,6 @@ def run_sky_engine():
     # ==========================================
     # INDEPENDENT BAMBOO LIGHT LOGIC
     # ==========================================
-    # The 50% color is baked into the [126, 126, 126, 126] array. 
-    # We ramp segment brightness to 255 to maintain that true 50% output.
     bamboo_target = 255 
     bamboo_sunrise_end = sunrise_time + datetime.timedelta(minutes=30)
     bamboo_sunset_end = sunset_time + datetime.timedelta(minutes=30)
@@ -94,7 +92,7 @@ def run_sky_engine():
         bamboo_on = True
 
     # ==========================================
-    # TIME-BASED PHASE ROUTING (Matrix & Afterburners)
+    # TIME-BASED PHASE ROUTING 
     # ==========================================
     now_time = now.time()
     
@@ -115,12 +113,12 @@ def run_sky_engine():
     # CALCULATE PHASE VALUES
     # ==========================================
     seg0_on, seg2_on = True, False
+    ab_val = 0
     
     if phase == "SLEEP":
         master_bri = 116
         c_bri, target_x, c_ix, active_alpha, c_pal = 0, 0, 0, 0, 0
         c_sky, c_cloud, c_sun = [0,0,0], [0,0,0], [0,0,0]
-        ab_r, ab_g, ab_b = 0, 0, 0
         seg0_on, seg2_on = False, False
 
     elif phase == "MORNING_RAMP":
@@ -139,7 +137,6 @@ def run_sky_engine():
         c_cloud = lerp_color([10, 10, 15], d_cloud, t)
         c_sun = lerp_color([140, 145, 150], d_sun, t)
         
-        ab_r, ab_g, ab_b = 0, 0, 0
         master_bri = c_bri
 
     elif phase == "DAY":
@@ -151,33 +148,29 @@ def run_sky_engine():
         else: weather_scale = 0.95 - ((clouds - 30) / 70.0) * 0.40
             
         active_alpha = int(255 * weather_scale)
-        r_base, g_base, b_base = 0, 0, 0
+        ab_base = 0
         
         if 100 <= target_x <= 155:
-            r_base, g_base, b_base = 255, 255, 255
+            ab_base = 255
             ab_active_alpha = 255
         else:
             ab_active_alpha = active_alpha
             if 30 <= target_x < 100:
-                r_base = int(((target_x - 30) / 70.0) * 255)
+                ab_base = int(((target_x - 30) / 70.0) * 255)
             elif 155 < target_x <= 225:
                 fade = 1.0 - ((target_x - 155) / 70.0)
-                r_base, g_base, b_base = int(255 * fade), int(255 * fade), 255
-            elif target_x > 225:
-                b_base = max(0, int(255 * (1.0 - ((target_x - 225) / 30.0))))
+                ab_base = int(255 * fade)
             
         if now.hour >= 8:
-            seg2_on = True
-            ab_r = min(255, max(0, int((r_base * ab_active_alpha) / 255)))
-            ab_g = min(255, max(0, int((g_base * ab_active_alpha) / 255)))
-            ab_b = min(255, max(0, int((b_base * ab_active_alpha) / 255)))
+            ab_val = min(255, max(0, int((ab_base * ab_active_alpha) / 255)))
         else:
-            ab_r, ab_g, ab_b = 0, 0, 0
+            ab_val = 0
 
-        if ab_r < 20: ab_r = 0
-        if ab_g < 20: ab_g = 0
-        if ab_b < 20: ab_b = 0
-
+        # Python-level Cutoffs
+        if clouds > 74.5: ab_val = 0  # Slider > 190 condition
+        if ab_val < 51: ab_val = 0    # 20% Floor rule
+        
+        seg2_on = (ab_val > 0)
         master_bri, c_bri = 255, 255
         c_pal = 59
         c_ix = int(clouds * 2.55)
@@ -200,8 +193,10 @@ def run_sky_engine():
         c_cloud = lerp_color(a_cloud, [36, 36, 36], t)
         c_sun = lerp_color(a_sun, [255, 255, 255], t)
         
-        seg2_on = True
-        ab_r, ab_g, ab_b = lerp_color([0, 0, 0], [8, 255, 0], t)
+        ab_val = lerp(0, 255, t)
+        if clouds > 74.5: ab_val = 0 
+        if ab_val < 51: ab_val = 0
+        seg2_on = (ab_val > 0)
 
     elif phase == "EVENING_LOCKED":
         master_bri = 127
@@ -215,8 +210,9 @@ def run_sky_engine():
         c_cloud = [36, 36, 36]
         c_sun = [255, 255, 255]
         
-        seg2_on = True
-        ab_r, ab_g, ab_b = 8, 255, 0
+        ab_val = 255
+        if clouds > 74.5: ab_val = 0 
+        seg2_on = (ab_val > 0)
 
     elif phase == "NIGHT_SKY":
         master_bri = int(25.5 + (25.5 * (clouds / 100.0)))
@@ -232,7 +228,7 @@ def run_sky_engine():
         c_sun = [140, 145, 150] 
         
         seg2_on = False
-        ab_r, ab_g, ab_b = 0, 0, 0
+        ab_val = 0
 
     # ====================================================
     # BUILD EXPLICIT 6-SEGMENT PAYLOAD 
@@ -240,7 +236,8 @@ def run_sky_engine():
     payload = {
         "on": True, 
         "bri": master_bri, 
-        "transition": 70, 
+        "transition": 70,
+        "mainseg": 2, 
         "seg": [
             {
                 "id": 0, 
@@ -262,9 +259,9 @@ def run_sky_engine():
                 "id": 2, 
                 "on": seg2_on,
                 "bri": 255,
-                "col": [[ab_r, ab_g, ab_b, 0], [0,0,0,0], [0,0,0,0]], 
+                "col": [[ab_val, ab_val, ab_val, 0], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
-                "fx": 169, "sx": 128, "ix": 128, "pal": 0
+                "fx": 169, "sx": 128, "ix": 128, "pal": 0, "rev": True
             },
             {
                 "id": 3, 
@@ -272,7 +269,7 @@ def run_sky_engine():
                 "bri": bamboo_bri,
                 "col": [[126, 126, 126, 126], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
-                "fx": 0, "sx": 128, "ix": 128, "pal": 0
+                "fx": 0, "sx": 128, "ix": 128, "pal": 0, "lc": 2
             },
             {
                 "id": 4, 
@@ -288,14 +285,14 @@ def run_sky_engine():
                 "bri": 255,
                 "col": [[0,0,0,126], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
-                "fx": 0, "sx": 128, "ix": 128, "pal": 0
+                "fx": 0, "sx": 128, "ix": 128, "pal": 0, "rY": True
             }
         ]
     }
 
     # --- PUSH TO MQTT ---
     print(f"[{phase}] Time: {now_time} | Clouds: {clouds}% | Moon Phase: {moon_phase:.2f}")
-    print(f"Bamboo Segment -> Live Bri: {bamboo_bri} | On: {bamboo_on} | Base Color: [126,126,126,126]")
+    print(f"Afterburners -> Level: {ab_val}/255 | Active: {seg2_on}")
     
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
@@ -305,7 +302,7 @@ def run_sky_engine():
         client.loop_start() 
         publish_result = client.publish(MQTT_TOPIC, json.dumps(payload), qos=1)
         publish_result.wait_for_publish(timeout=10)
-        print("Successfully published 6-segment payload.")
+        print("Successfully published pure-white afterburner payload.")
     except Exception as e:
         print(f"MQTT Connection failed: {e}")
     finally:
