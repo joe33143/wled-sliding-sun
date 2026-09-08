@@ -72,11 +72,9 @@ def run_sky_engine():
     # ==========================================
     # INDEPENDENT BAMBOO LIGHT LOGIC
     # ==========================================
-    # Target brightness scales between 127 (50%) during 100% clouds and 178 (70%) during clear skies
-    bamboo_max = 178
-    bamboo_min = 127
-    bamboo_target = int(bamboo_max - ((clouds / 100.0) * (bamboo_max - bamboo_min)))
-    
+    # The 50% color is baked into the [126, 126, 126, 126] array. 
+    # We ramp segment brightness to 255 to maintain that true 50% output.
+    bamboo_target = 255 
     bamboo_sunrise_end = sunrise_time + datetime.timedelta(minutes=30)
     bamboo_sunset_end = sunset_time + datetime.timedelta(minutes=30)
     
@@ -84,17 +82,14 @@ def run_sky_engine():
         bamboo_bri = 0
         bamboo_on = False
     elif sunrise_time <= now <= bamboo_sunrise_end:
-        # 30-min Sunrise Ramp
         t = (now - sunrise_time).total_seconds() / 1800.0
         bamboo_bri = lerp(0, bamboo_target, t)
         bamboo_on = True
     elif sunset_time <= now <= bamboo_sunset_end:
-        # 30-min Sunset Ramp
         t = (now - sunset_time).total_seconds() / 1800.0
         bamboo_bri = lerp(bamboo_target, 0, t)
         bamboo_on = True
     else:
-        # Daytime Locked
         bamboo_bri = bamboo_target
         bamboo_on = True
 
@@ -158,7 +153,6 @@ def run_sky_engine():
         active_alpha = int(255 * weather_scale)
         r_base, g_base, b_base = 0, 0, 0
         
-        # FULL BLAST NOON OVERRIDE
         if 100 <= target_x <= 155:
             r_base, g_base, b_base = 255, 255, 255
             ab_active_alpha = 255
@@ -180,7 +174,6 @@ def run_sky_engine():
         else:
             ab_r, ab_g, ab_b = 0, 0, 0
 
-        # Python-level 8% deadzone clamp for daily ramps
         if ab_r < 20: ab_r = 0
         if ab_g < 20: ab_g = 0
         if ab_b < 20: ab_b = 0
@@ -277,7 +270,7 @@ def run_sky_engine():
                 "id": 3, 
                 "on": bamboo_on,
                 "bri": bamboo_bri,
-                "col": [[255, 230, 200, 0], [0,0,0,0], [0,0,0,0]], 
+                "col": [[126, 126, 126, 126], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
                 "fx": 0, "sx": 128, "ix": 128, "pal": 0
             },
@@ -302,7 +295,7 @@ def run_sky_engine():
 
     # --- PUSH TO MQTT ---
     print(f"[{phase}] Time: {now_time} | Clouds: {clouds}% | Moon Phase: {moon_phase:.2f}")
-    print(f"Bamboo Segment -> Target Bri: {bamboo_target} | Live Bri: {bamboo_bri} | On: {bamboo_on}")
+    print(f"Bamboo Segment -> Live Bri: {bamboo_bri} | On: {bamboo_on} | Base Color: [126,126,126,126]")
     
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
