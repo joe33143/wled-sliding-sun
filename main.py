@@ -90,25 +90,18 @@ def run_sky_engine():
     # ==========================================
     # CALCULATE PHASE VALUES
     # ==========================================
-    
-    # Defaults
-    seg0_on = True
-    seg1_on = False
-    seg2_on = False
+    seg0_on, seg2_on, seg3_on = True, False, True
     
     if phase == "SLEEP":
-        # 10 PM to 4 AM: Turn everything off EXCEPT the curtain
         master_bri = 116
-        c_bri, target_x, c_ix, active_alpha, c_pal = 0, 0, 0, 0, 0
+        c_bri, target_x, c_ix, active_alpha = 0, 0, 0, 0
         c_sky, c_cloud, c_sun = [0,0,0], [0,0,0], [0,0,0]
         ab_r, ab_g, ab_b = 0, 0, 0
+        bamboo_bri = 0
         
-        seg0_on = False
-        seg1_on = True
-        seg2_on = False
+        seg0_on, seg2_on, seg3_on = False, False, False
 
     elif phase == "MORNING_RAMP":
-        # 4 AM to Sunrise: Ramp up Matrix. Afterburners stay OFF.
         morning_start = now.replace(hour=4, minute=0, second=0)
         t = (now - morning_start).total_seconds() / (sunrise_time - morning_start).total_seconds()
         
@@ -118,49 +111,62 @@ def run_sky_engine():
         target_x = lerp(0, 128, t)
         active_alpha = lerp(0, d_alpha, t)
         c_ix = int(clouds * 2.55)
-        c_pal = 59
         
         c_sky = lerp_color([0, 0, 5], d_sky, t)
         c_cloud = lerp_color([10, 10, 15], d_cloud, t)
         c_sun = lerp_color([140, 145, 150], d_sun, t)
         
-        ab_r, ab_g, ab_b = 0, 0, 0
+        # Afterburners sweeping up but constrained by the deadzone
+        seg2_on = True
+        ab_r, ab_g, ab_b = lerp_color([0, 0, 0], [255, 100, 50], t) 
         master_bri = c_bri
+        bamboo_bri = c_bri
 
     elif phase == "DAY":
-        # Sunrise to Sunset
         target_x = calculate_position(now, sunrise_time, sunset_time)
         _, raw_sun, raw_sky, raw_cloud, raw_alpha = day_effects.get_day_payload(alt, temp, clouds, is_stormy)
         
-        if clouds >= 100: weather_scale = 0.30
-        elif clouds <= 30: weather_scale = 0.70
-        else: weather_scale = 0.70 - ((clouds - 30) / 70.0) * 0.40
+        # Matrix Weather Scale
+        if clouds >= 100: weather_scale = 0.55
+        elif clouds <= 30: weather_scale = 0.95
+        else: weather_scale = 0.95 - ((clouds - 30) / 70.0) * 0.40
             
         active_alpha = int(255 * weather_scale)
+        bamboo_bri = int(255 * max(0.50, weather_scale))
         
-        r_base, g_base, b_base = 0, 0, 0
-        if 30 <= target_x < 100:
-            r_base = int(((target_x - 30) / 70.0) * 255)
-        elif 100 <= target_x <= 155:
-            r_base, g_base, b_base = 255, 255, 255
-        elif 155 < target_x <= 225:
-            fade = 1.0 - ((target_x - 155) / 70.0)
-            r_base, g_base, b_base = int(255 * fade), int(255 * fade), 255
-        elif target_x > 225:
-            b_base = max(0, int(255 * (1.0 - ((target_x - 225) / 30.0))))
-            
-        # Only enable afterburners after 8 AM
-        if now.hour >= 8:
-            seg2_on = True
-            ab_r = min(255, max(0, int((r_base * active_alpha) / 255)))
-            ab_g = min(255, max(0, int((g_base * active_alpha) / 255)))
-            ab_b = min(255, max(0, int((b_base * active_alpha) / 255)))
+        # Afterburner Weather Scale (70% Clear / 55% Storm)
+        if clouds <= 30:
+            ab_weather_scale = 0.70
+        elif clouds >= 100:
+            ab_weather_scale = 0.55
         else:
-            ab_r, ab_g, ab_b = 0, 0, 0
+            ab_weather_scale = 0.70 - ((clouds - 30) / 70.0) * 0.15
 
-        master_bri = 255
-        c_bri = 255
-        c_pal = 59
+        r_base, g_base, b_base = 0, 0, 0
+        golden_hour_start = sunset_time - datetime.timedelta(hours=1)
+        eight_am = now.replace(hour=8, minute=0, second=0)
+
+        # Force pure white between 8 AM and Golden Hour
+        if eight_am <= now < golden_hour_start:
+            r_base, g_base, b_base = 255, 255, 255
+        else:
+            # Sweeping spatial colors
+            if 30 <= target_x < 100:
+                r_base = int(((target_x - 30) / 70.0) * 255)
+            elif 100 <= target_x <= 155:
+                r_base, g_base, b_base = 255, 255, 255
+            elif 155 < target_x <= 225:
+                fade = 1.0 - ((target_x - 155) / 70.0)
+                r_base, g_base, b_base = int(255 * fade), int(255 * fade), 255
+            elif target_x > 225:
+                b_base = max(0, int(255 * (1.0 - ((target_x - 225) / 30.0))))
+            
+        seg2_on = True
+        ab_r = min(255, max(0, int(r_base * ab_weather_scale)))
+        ab_g = min(255, max(0, int(g_base * ab_weather_scale)))
+        ab_b = min(255, max(0, int(b_base * ab_weather_scale)))
+
+        master_bri, c_bri = 255, 255
         c_ix = int(clouds * 2.55)
         c_sky = [min(255, max(0, int(c * weather_scale))) for c in raw_sky]
         c_cloud = [min(255, max(0, int(c * weather_scale))) for c in raw_cloud]
@@ -175,14 +181,15 @@ def run_sky_engine():
         target_x = lerp(255, 128, t)
         c_ix = lerp(int(clouds * 2.55), 171, t)
         active_alpha = lerp(a_alpha, 255, t)
-        c_pal = 9 
+        bamboo_bri = lerp(255, 100, t)
         
         c_sky = lerp_color(a_sky, [0, 0, 0], t)
         c_cloud = lerp_color(a_cloud, [36, 36, 36], t)
         c_sun = lerp_color(a_sun, [255, 255, 255], t)
         
         seg2_on = True
-        ab_r, ab_g, ab_b = lerp_color([0, 0, 0], [8, 255, 0], t)
+        # Fade from the sunset sweep directly into the Evening Green profile
+        ab_r, ab_g, ab_b = lerp_color([0, 0, 200], [8, 255, 0], t)
 
     elif phase == "EVENING_LOCKED":
         master_bri = 127
@@ -190,7 +197,7 @@ def run_sky_engine():
         target_x = 128
         c_ix = 171
         active_alpha = 255
-        c_pal = 9
+        bamboo_bri = 100
         
         c_sky = [0, 0, 0]
         c_cloud = [36, 36, 36]
@@ -200,27 +207,30 @@ def run_sky_engine():
         ab_r, ab_g, ab_b = 8, 255, 0
 
     elif phase == "NIGHT_SKY":
-        # 9 PM to 10 PM: Dim Moon & Night Sky
-        # Cloud brightness scales from 10% (min) to 20% (max) based on weather
         master_bri = int(25.5 + (25.5 * (clouds / 100.0)))
         c_bri = 255 
-        
-        # Moon Alpha scales 5% to 50% based on lunar phase
         active_alpha = int(12.75 + (114.75 * moon_phase)) 
         
         target_x = 128
         c_ix = int(clouds * 2.55)
-        c_pal = 0
+        bamboo_bri = master_bri
         
         c_sky = [5, 5, 10]
         c_cloud = [20, 25, 30]
-        c_sun = [140, 145, 150] # Cold Grey Moon
+        c_sun = [140, 145, 150] 
         
         seg2_on = False
         ab_r, ab_g, ab_b = 0, 0, 0
 
     # ====================================================
-    # ASSIGN VARIABLES & BUILD PAYLOAD
+    # 15% HARDWARE DEADZONE CLAMP (38/255)
+    # ====================================================
+    if ab_r < 38: ab_r = 0
+    if ab_g < 38: ab_g = 0
+    if ab_b < 38: ab_b = 0
+
+    # ====================================================
+    # BUILD PAYLOAD (Palettes and FX omitted to preserve user UI settings)
     # ====================================================
     wled_transition = 70
     
@@ -234,31 +244,25 @@ def run_sky_engine():
                 "on": seg0_on, 
                 "bri": c_bri,
                 "col": [c_sky + [0], c_cloud + [0], c_sun + [0]], 
-                "cct": 127,
-                "fx": 142, "sx": target_x, "ix": c_ix, "pal": c_pal, "c1": active_alpha
-            },
-            {
-                "id": 1, 
-                "on": seg1_on, 
-                "bri": 116, 
-                "col": [[0,0,0,0], [0,0,0,0], [0,0,0,0]], 
-                "cct": 127,  
-                "fx": 0, "sx": 166, "ix": 152, "pal": 30 
+                "sx": target_x, "ix": c_ix, "c1": active_alpha
             },
             {
                 "id": 2, 
                 "on": seg2_on,
                 "bri": 255,
-                "col": [[ab_r, ab_g, ab_b, 0], [0,0,0,0], [0,0,0,0]], 
-                "cct": 127,  
-                "fx": 169, "sx": 128, "ix": 128, "pal": 0
+                "col": [[ab_r, ab_g, ab_b, 0], [0,0,0,0], [0,0,0,0]]
+            },
+            {
+                "id": 3, 
+                "on": seg3_on,
+                "bri": bamboo_bri,
+                "col": [[255, 230, 200, 0], [0,0,0,0], [0,0,0,0]]
             }
         ]
     }
 
     # --- PUSH TO MQTT ---
     print(f"[{phase}] Time: {now_time} | Clouds: {clouds}% | Moon Phase: {moon_phase:.2f}")
-    print(f"Master Bri: {master_bri} | Moon Alpha: {active_alpha}/255")
     
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
