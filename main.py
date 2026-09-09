@@ -112,14 +112,14 @@ def run_sky_engine():
     # ==========================================
     # CALCULATE PHASE VALUES
     # ==========================================
-    seg0_on, seg2_on = True, False
+    seg0_on, seg2_on, seg4_on = True, False, True
     ab_val = 0
     
     if phase == "SLEEP":
         master_bri = 116
         c_bri, target_x, c_ix, active_alpha, c_pal = 0, 0, 0, 0, 0
         c_sky, c_cloud, c_sun = [0,0,0], [0,0,0], [0,0,0]
-        seg0_on, seg2_on = False, False
+        seg0_on, seg2_on, seg4_on = False, False, False
 
     elif phase == "MORNING_RAMP":
         morning_start = now.replace(hour=4, minute=0, second=0)
@@ -127,7 +127,8 @@ def run_sky_engine():
         
         _, d_sun, d_sky, d_cloud, d_alpha = day_effects.get_day_payload(0.0, temp, clouds, is_stormy)
         
-        c_bri = lerp(0, 255, t)
+        # Exponential curve keeps the lights dimmer for much longer during the early morning
+        c_bri = lerp(0, 255, t ** 2)
         target_x = lerp(0, 128, t)
         active_alpha = lerp(0, d_alpha, t)
         c_ix = int(clouds * 2.55)
@@ -179,19 +180,18 @@ def run_sky_engine():
 
     elif phase == "SUNSET_FADE":
         _, a_sun, a_sky, a_cloud, a_alpha = day_effects.get_day_payload(0.0, temp, clouds, is_stormy)
-        t = (now - sunset_time).total_seconds() / 1800.0  # 30-minute fade
+        t = (now - sunset_time).total_seconds() / 1800.0  
         
-        master_bri = lerp(255, 127, t)
-        c_bri = lerp(255, 173, t)
+        # Dimming targets heavily reduced from original 127/173
+        master_bri = lerp(255, 80, t)
+        c_bri = lerp(255, 120, t)
         target_x = lerp(255, 128, t)
         
-        # Cloud cover fades to 60% (153/255)
         c_ix = lerp(int(clouds * 2.55), 153, t)
         active_alpha = lerp(a_alpha, 255, t)
         c_pal = 9 
         
         c_sky = lerp_color(a_sky, [0, 0, 0], t)
-        # Cloud color fades to black
         c_cloud = lerp_color(a_cloud, [0, 0, 0], t)
         c_sun = lerp_color(a_sun, [255, 255, 255], t)
         
@@ -201,15 +201,16 @@ def run_sky_engine():
         seg2_on = (ab_val > 0)
 
     elif phase == "EVENING_LOCKED":
-        master_bri = 127
-        c_bri = 173
+        # New softer targets for evening time
+        master_bri = 80
+        c_bri = 120
         target_x = 128
-        c_ix = 153  # Locked at 60% cloud cover
+        c_ix = 153  
         active_alpha = 255
         c_pal = 9
         
         c_sky = [0, 0, 0]
-        c_cloud = [0, 0, 0]  # Locked at black
+        c_cloud = [0, 0, 0]  
         c_sun = [255, 255, 255]
         
         ab_val = 255
@@ -229,7 +230,7 @@ def run_sky_engine():
         c_cloud = [20, 25, 30]
         c_sun = [140, 145, 150] 
         
-        seg2_on = False
+        seg2_on, seg4_on = False, False
         ab_val = 0
 
     # ====================================================
@@ -275,7 +276,7 @@ def run_sky_engine():
             },
             {
                 "id": 4, 
-                "on": True,
+                "on": seg4_on,
                 "bri": 255,
                 "col": [[255,255,255,0], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
