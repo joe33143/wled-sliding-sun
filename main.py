@@ -127,7 +127,6 @@ def run_sky_engine():
         
         _, d_sun, d_sky, d_cloud, d_alpha = day_effects.get_day_payload(0.0, temp, clouds, is_stormy)
         
-        # Exponential curve keeps the lights dimmer for much longer during the early morning
         c_bri = lerp(0, 255, t ** 2)
         target_x = lerp(0, 128, t)
         active_alpha = lerp(0, d_alpha, t)
@@ -144,9 +143,10 @@ def run_sky_engine():
         target_x = calculate_position(now, sunrise_time, sunset_time)
         _, raw_sun, raw_sky, raw_cloud, raw_alpha = day_effects.get_day_payload(alt, temp, clouds, is_stormy)
         
-        if clouds >= 100: weather_scale = 0.55
+        # LOWERED: Heavy clouds drop brightness to 35%
+        if clouds >= 100: weather_scale = 0.35
         elif clouds <= 30: weather_scale = 0.95
-        else: weather_scale = 0.95 - ((clouds - 30) / 70.0) * 0.40
+        else: weather_scale = 0.95 - ((clouds - 30) / 70.0) * 0.60
             
         active_alpha = int(255 * weather_scale)
         ab_base = 0
@@ -171,7 +171,17 @@ def run_sky_engine():
         if ab_val < 51: ab_val = 0    
         
         seg2_on = (ab_val > 0)
-        master_bri, c_bri = 255, 255
+        
+        # NEW: Pre-Sunset dimming (starts exactly 90 minutes before sunset)
+        time_to_sunset = (sunset_time - now).total_seconds()
+        if time_to_sunset < 5400:  
+            fade_t = max(0.0, time_to_sunset / 5400.0)
+            # Fades downward into the sunset baseline
+            master_bri = lerp(127, 255, fade_t)
+            c_bri = lerp(173, 255, fade_t)
+        else:
+            master_bri, c_bri = 255, 255
+            
         c_pal = 59
         c_ix = int(clouds * 2.55)
         c_sky = [min(255, max(0, int(c * weather_scale))) for c in raw_sky]
@@ -182,9 +192,9 @@ def run_sky_engine():
         _, a_sun, a_sky, a_cloud, a_alpha = day_effects.get_day_payload(0.0, temp, clouds, is_stormy)
         t = (now - sunset_time).total_seconds() / 1800.0  
         
-        # Dimming targets heavily reduced from original 127/173
-        master_bri = lerp(255, 80, t)
-        c_bri = lerp(255, 120, t)
+        # Starts exactly where the Pre-Sunset dimming left off
+        master_bri = lerp(127, 80, t)
+        c_bri = lerp(173, 120, t)
         target_x = lerp(255, 128, t)
         
         c_ix = lerp(int(clouds * 2.55), 153, t)
@@ -195,13 +205,11 @@ def run_sky_engine():
         c_cloud = lerp_color(a_cloud, [0, 0, 0], t)
         c_sun = lerp_color(a_sun, [255, 255, 255], t)
         
-        ab_val = lerp(0, 255, t)
-        if clouds > 74.5: ab_val = 0 
+        ab_val = lerp(ab_val, 0, t)
         if ab_val < 51: ab_val = 0
         seg2_on = (ab_val > 0)
 
     elif phase == "EVENING_LOCKED":
-        # New softer targets for evening time
         master_bri = 80
         c_bri = 120
         target_x = 128
@@ -213,9 +221,8 @@ def run_sky_engine():
         c_cloud = [0, 0, 0]  
         c_sun = [255, 255, 255]
         
-        ab_val = 255
-        if clouds > 74.5: ab_val = 0 
-        seg2_on = (ab_val > 0)
+        seg2_on = False
+        ab_val = 0
 
     elif phase == "NIGHT_SKY":
         master_bri = int(25.5 + (25.5 * (clouds / 100.0)))
@@ -234,7 +241,7 @@ def run_sky_engine():
         ab_val = 0
 
     # ====================================================
-    # BUILD EXPLICIT 6-SEGMENT PAYLOAD 
+    # BUILD EXPLICIT 5-SEGMENT PAYLOAD (Dead pixel removed)
     # ====================================================
     payload = {
         "on": True, 
@@ -281,14 +288,6 @@ def run_sky_engine():
                 "col": [[255,255,255,0], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
                 "fx": 83, "sx": 64, "ix": 69, "pal": 54
-            },
-            {
-                "id": 5, 
-                "on": True,
-                "bri": 255,
-                "col": [[0,0,0,126], [0,0,0,0], [0,0,0,0]], 
-                "cct": 127,  
-                "fx": 0, "sx": 128, "ix": 128, "pal": 0, "rY": True
             }
         ]
     }
