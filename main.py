@@ -33,7 +33,7 @@ def lerp(a, b, t):
 def lerp_color(c1, c2, t):
     return [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)]
 
-# --- ORIGINAL ATMOSPHERIC MATH RESTORED ---
+# --- ATMOSPHERIC MATH ---
 def get_base_hues(altitude_deg, clouds, turbidity=5.0):
     c = clouds / 100.0
     keys = [
@@ -57,7 +57,6 @@ def get_base_hues(altitude_deg, clouds, turbidity=5.0):
     g = lerp(k1[2], k2[2], t)
     b = lerp(k1[3], k2[3], t)
 
-    # Apply Original Turbidity & Dust Offsets
     dim = 1.0 - (c * 0.5)
     r *= dim; g *= dim; b *= dim
     r += (turbidity * 3.5); g += (turbidity * 2.5); b -= (turbidity * 1.5)
@@ -155,14 +154,13 @@ def run_sky_engine():
         morning_start = now.replace(hour=4, minute=0, second=0)
         t = max(0.0, min(1.0, (now - morning_start).total_seconds() / (sunrise_time - morning_start).total_seconds()))
         
-        # Matrix stays mostly dark until right before sunrise using t^3
-        c_bri = lerp(0, 255, t ** 3) 
+        # Ramps to 70% (178/255) maximum at exact sunrise
+        c_bri = lerp(0, 178, t ** 3) 
         target_x = lerp(0, 128, t)
         
-        # Colors are tied to ACTUAL solar altitude. It will stay dark blue (-6 logic) until sun rises.
         clamped_alt = min(0.0, alt)
         c_sky = get_base_hues(clamped_alt, clouds, turbidity)
-        c_cloud = [min(255, int(c * 1.8)) for c in c_sky] # Your original vivid boost
+        c_cloud = [min(255, int(c * 1.8)) for c in c_sky] 
         c_sun = [255, 241, 224]
         
         c_ix = int(clouds * 2.55)
@@ -177,21 +175,37 @@ def run_sky_engine():
         c_cloud = [min(255, int(c * 1.8)) for c in c_sky]
         c_sun = [255, 241, 224]
         
-        # Storm Brightness Logic
+        # Determine weather-based brightness ceiling
         if is_stormy or clouds > 75:
             active_alpha = int(lerp(100, 0, (clouds - 75)/25.0))
-            master_bri = 180 if not is_stormy else 130
+            weather_master_target = 180 if not is_stormy else 130
         elif clouds <= 35:
             active_alpha = 255
-            master_bri = 255
+            weather_master_target = 255
         else:
             active_alpha = int(lerp(255, 100, (clouds - 35)/40.0))
-            master_bri = int(lerp(255, 180, (clouds - 35)/40.0))
+            weather_master_target = int(lerp(255, 180, (clouds - 35)/40.0))
             
-        c_bri = 255
-        ab_base = 0
+        # Apply Time-of-Day Ramps to the Master Brightness
+        eight_am = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        time_to_sunset = (sunset_time - now).total_seconds()
+        
+        if now < eight_am:
+            # Smoothly fades from the 70% morning anchor up to the daily target between sunrise and 8 AM
+            ramp_t = max(0.0, min(1.0, (now - sunrise_time).total_seconds() / (eight_am - sunrise_time).total_seconds()))
+            morning_ceiling = int(lerp(178, 255, ramp_t))
+            master_bri = int(weather_master_target * (morning_ceiling / 255.0))
+            c_bri = morning_ceiling
+        elif time_to_sunset < 5400:  
+            fade_t = max(0.0, time_to_sunset / 5400.0)
+            master_bri = lerp(127, weather_master_target, fade_t)
+            c_bri = lerp(173, 255, fade_t)
+        else:
+            master_bri = weather_master_target
+            c_bri = 255
         
         # Afterburner sweep math
+        ab_base = 0
         if 100 <= target_x <= 155:
             ab_base = 255
             ab_active_alpha = 255
@@ -208,7 +222,6 @@ def run_sky_engine():
         else:
             ab_val = 0
 
-        # Afterburner Cutoffs
         if clouds > 74.5: ab_val = 0  
         if ab_val < 51: ab_val = 0    
         
@@ -223,7 +236,6 @@ def run_sky_engine():
         c_bri = lerp(255, 120, t)
         target_x = lerp(255, 128, t)
         
-        # Colors use true declining altitude to smoothly enter twilight
         c_sky = get_base_hues(alt, clouds, turbidity)
         c_cloud = [min(255, int(c * 1.8)) for c in c_sky]
         c_sun = [255, 241, 224]
