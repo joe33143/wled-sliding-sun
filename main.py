@@ -10,8 +10,6 @@ from astral.sun import sun
 import ephem
 import pytz
 
-import day_effects
-
 # --- GLOBALS & CONFIG ---
 METEOSOURCE_API_KEY = os.getenv("METEOSOURCE_API_KEY")
 MQTT_BROKER = "broker.hivemq.com"
@@ -34,6 +32,37 @@ def lerp(a, b, t):
 
 def lerp_color(c1, c2, t):
     return [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)]
+
+# --- ORIGINAL ATMOSPHERIC MATH RESTORED ---
+def get_base_hues(altitude_deg, clouds, turbidity=5.0):
+    c = clouds / 100.0
+    keys = [
+        (-6,   35,  45,  75),  
+        (0,   120, 110, 140),  
+        (10,  190, 185, 205),  
+        (35,  240, 235, 235),  
+        (55,  255, 250, 245),  
+        (90,  255, 255, 255)   
+    ]
+    k1, k2 = keys[0], keys[-1]
+    for i in range(len(keys) - 1):
+        if keys[i][0] <= altitude_deg <= keys[i+1][0]:
+            k1, k2 = keys[i], keys[i+1]
+            break
+    if altitude_deg < keys[0][0]: k1 = k2 = keys[0]
+    elif altitude_deg > keys[-1][0]: k1 = k2 = keys[-1]
+
+    t = 0.0 if k2[0] == k1[0] else max(0.0, min(1.0, (altitude_deg - k1[0]) / (k2[0] - k1[0])))
+    r = lerp(k1[1], k2[1], t)
+    g = lerp(k1[2], k2[2], t)
+    b = lerp(k1[3], k2[3], t)
+
+    # Apply Original Turbidity & Dust Offsets
+    dim = 1.0 - (c * 0.5)
+    r *= dim; g *= dim; b *= dim
+    r += (turbidity * 3.5); g += (turbidity * 2.5); b -= (turbidity * 1.5)
+    
+    return [int(max(0, min(255, r))), int(max(0, min(255, g))), int(max(0, min(255, b)))]
 
 # --- MAIN LOGIC ---
 def run_sky_engine():
@@ -114,6 +143,7 @@ def run_sky_engine():
     # ==========================================
     seg0_on, seg2_on, seg4_on = True, False, True
     ab_val = 0
+    turbidity = 5.0
     
     if phase == "SLEEP":
         master_bri = 116
@@ -123,34 +153,45 @@ def run_sky_engine():
 
     elif phase == "MORNING_RAMP":
         morning_start = now.replace(hour=4, minute=0, second=0)
-        t = (now - morning_start).total_seconds() / (sunrise_time - morning_start).total_seconds()
+        t = max(0.0, min(1.0, (now - morning_start).total_seconds() / (sunrise_time - morning_start).total_seconds()))
         
-        _, d_sun, d_sky, d_cloud, d_alpha = day_effects.get_day_payload(0.0, temp, clouds, is_stormy)
-        
-        c_bri = lerp(0, 255, t ** 2)
+        # Matrix stays mostly dark until right before sunrise using t^3
+        c_bri = lerp(0, 255, t ** 3) 
         target_x = lerp(0, 128, t)
-        active_alpha = lerp(0, d_alpha, t)
+        
+        # Colors are tied to ACTUAL solar altitude. It will stay dark blue (-6 logic) until sun rises.
+        clamped_alt = min(0.0, alt)
+        c_sky = get_base_hues(clamped_alt, clouds, turbidity)
+        c_cloud = [min(255, int(c * 1.8)) for c in c_sky] # Your original vivid boost
+        c_sun = [255, 241, 224]
+        
         c_ix = int(clouds * 2.55)
         c_pal = 59
-        
-        c_sky = lerp_color([0, 0, 5], d_sky, t)
-        c_cloud = lerp_color([10, 10, 15], d_cloud, t)
-        c_sun = lerp_color([140, 145, 150], d_sun, t)
-        
+        active_alpha = lerp(0, 255, t)
         master_bri = c_bri
 
     elif phase == "DAY":
         target_x = calculate_position(now, sunrise_time, sunset_time)
-        _, raw_sun, raw_sky, raw_cloud, raw_alpha = day_effects.get_day_payload(alt, temp, clouds, is_stormy)
         
-        # LOWERED: Heavy clouds drop brightness to 35%
-        if clouds >= 100: weather_scale = 0.35
-        elif clouds <= 30: weather_scale = 0.95
-        else: weather_scale = 0.95 - ((clouds - 30) / 70.0) * 0.60
+        c_sky = get_base_hues(alt, clouds, turbidity)
+        c_cloud = [min(255, int(c * 1.8)) for c in c_sky]
+        c_sun = [255, 241, 224]
+        
+        # Storm Brightness Logic
+        if is_stormy or clouds > 75:
+            active_alpha = int(lerp(100, 0, (clouds - 75)/25.0))
+            master_bri = 180 if not is_stormy else 130
+        elif clouds <= 35:
+            active_alpha = 255
+            master_bri = 255
+        else:
+            active_alpha = int(lerp(255, 100, (clouds - 35)/40.0))
+            master_bri = int(lerp(255, 180, (clouds - 35)/40.0))
             
-        active_alpha = int(255 * weather_scale)
+        c_bri = 255
         ab_base = 0
         
+        # Afterburner sweep math
         if 100 <= target_x <= 155:
             ab_base = 255
             ab_active_alpha = 255
@@ -167,43 +208,29 @@ def run_sky_engine():
         else:
             ab_val = 0
 
+        # Afterburner Cutoffs
         if clouds > 74.5: ab_val = 0  
         if ab_val < 51: ab_val = 0    
         
         seg2_on = (ab_val > 0)
-        
-        # NEW: Pre-Sunset dimming (starts exactly 90 minutes before sunset)
-        time_to_sunset = (sunset_time - now).total_seconds()
-        if time_to_sunset < 5400:  
-            fade_t = max(0.0, time_to_sunset / 5400.0)
-            # Fades downward into the sunset baseline
-            master_bri = lerp(127, 255, fade_t)
-            c_bri = lerp(173, 255, fade_t)
-        else:
-            master_bri, c_bri = 255, 255
-            
         c_pal = 59
         c_ix = int(clouds * 2.55)
-        c_sky = [min(255, max(0, int(c * weather_scale))) for c in raw_sky]
-        c_cloud = [min(255, max(0, int(c * weather_scale))) for c in raw_cloud]
-        c_sun = raw_sun
 
     elif phase == "SUNSET_FADE":
-        _, a_sun, a_sky, a_cloud, a_alpha = day_effects.get_day_payload(0.0, temp, clouds, is_stormy)
         t = (now - sunset_time).total_seconds() / 1800.0  
         
-        # Starts exactly where the Pre-Sunset dimming left off
-        master_bri = lerp(127, 80, t)
-        c_bri = lerp(173, 120, t)
+        master_bri = lerp(255, 80, t)
+        c_bri = lerp(255, 120, t)
         target_x = lerp(255, 128, t)
         
-        c_ix = lerp(int(clouds * 2.55), 153, t)
-        active_alpha = lerp(a_alpha, 255, t)
-        c_pal = 9 
+        # Colors use true declining altitude to smoothly enter twilight
+        c_sky = get_base_hues(alt, clouds, turbidity)
+        c_cloud = [min(255, int(c * 1.8)) for c in c_sky]
+        c_sun = [255, 241, 224]
         
-        c_sky = lerp_color(a_sky, [0, 0, 0], t)
-        c_cloud = lerp_color(a_cloud, [0, 0, 0], t)
-        c_sun = lerp_color(a_sun, [255, 255, 255], t)
+        c_ix = lerp(int(clouds * 2.55), 153, t)
+        active_alpha = lerp(255, 0, t)
+        c_pal = 9 
         
         ab_val = lerp(ab_val, 0, t)
         if ab_val < 51: ab_val = 0
@@ -241,7 +268,7 @@ def run_sky_engine():
         ab_val = 0
 
     # ====================================================
-    # BUILD EXPLICIT 5-SEGMENT PAYLOAD (Dead pixel removed)
+    # BUILD EXPLICIT 5-SEGMENT PAYLOAD
     # ====================================================
     payload = {
         "on": True, 
@@ -293,7 +320,7 @@ def run_sky_engine():
     }
 
     # --- PUSH TO MQTT ---
-    print(f"[{phase}] Time: {now_time} | Clouds: {clouds}% | Moon Phase: {moon_phase:.2f}")
+    print(f"[{phase}] Time: {now_time} | Alt: {alt:.2f} | Clouds: {clouds}%")
     
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
