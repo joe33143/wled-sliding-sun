@@ -302,7 +302,7 @@ def run_sky_engine():
                 "bri": c_bri,
                 "col": [c_sky + [0], c_cloud + [0], c_sun + [0]], 
                 "cct": 127,
-                "fx": 142, "sx": target_x, "ix": c_ix, "pal": c_pal, "c1": active_alpha
+                "fx": 142, "sx": target_x, "ix": c_ix, "c1": active_alpha
             },
             {
                 "id": 1, 
@@ -324,7 +324,7 @@ def run_sky_engine():
                 "id": 3, 
                 "on": bamboo_on,
                 "bri": bamboo_bri,
-                "col": [[126, 126, 126, 126], [0,0,0,0], [0,0,0,0]], 
+                "col": [[200, 200, 200, 200], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
                 "fx": 0, "sx": 128, "ix": 128, "pal": 0, "lc": 2
             },
