@@ -63,6 +63,15 @@ def get_base_hues(altitude_deg, clouds, turbidity=5.0):
     
     return [int(max(0, min(255, r))), int(max(0, min(255, g))), int(max(0, min(255, b)))]
 
+def get_sun_color(alt):
+    # Sun is completely off until -2 degrees, then fades from deep red to yellow
+    if alt < -2:
+        return [0, 0, 0]
+    elif alt < 15:
+        progress = max(0.0, min(1.0, (alt + 2) / 17.0))
+        return [int(lerp(100, 255, progress)), int(lerp(10, 241, progress)), int(lerp(0, 224, progress))]
+    return [255, 241, 224]
+
 # --- MAIN LOGIC ---
 def run_sky_engine():
     city = LocationInfo("Varanasi", "India", TIMEZONE, LAT, LON)
@@ -154,26 +163,26 @@ def run_sky_engine():
         morning_start = now.replace(hour=4, minute=0, second=0)
         t = max(0.0, min(1.0, (now - morning_start).total_seconds() / (sunrise_time - morning_start).total_seconds()))
         
-        # Ramps to 70% (178/255) maximum at exact sunrise
-        c_bri = lerp(0, 178, t ** 3) 
+        # Original startup dimming: peaks at exactly 18/255 at sunrise
+        master_bri = lerp(0, 18, t ** 3) 
+        c_bri = 255
         target_x = lerp(0, 128, t)
         
         clamped_alt = min(0.0, alt)
         c_sky = get_base_hues(clamped_alt, clouds, turbidity)
         c_cloud = [min(255, int(c * 1.8)) for c in c_sky] 
-        c_sun = [255, 241, 224]
+        c_sun = get_sun_color(alt)
         
         c_ix = int(clouds * 2.55)
         c_pal = 59
         active_alpha = lerp(0, 255, t)
-        master_bri = c_bri
 
     elif phase == "DAY":
         target_x = calculate_position(now, sunrise_time, sunset_time)
         
         c_sky = get_base_hues(alt, clouds, turbidity)
         c_cloud = [min(255, int(c * 1.8)) for c in c_sky]
-        c_sun = [255, 241, 224]
+        c_sun = get_sun_color(alt)
         
         # Determine weather-based brightness ceiling
         if is_stormy or clouds > 75:
@@ -191,11 +200,10 @@ def run_sky_engine():
         time_to_sunset = (sunset_time - now).total_seconds()
         
         if now < eight_am:
-            # Smoothly fades from the 70% morning anchor up to the daily target between sunrise and 8 AM
+            # Smoothly fades from 18 up to the daily weather target between sunrise and 8 AM
             ramp_t = max(0.0, min(1.0, (now - sunrise_time).total_seconds() / (eight_am - sunrise_time).total_seconds()))
-            morning_ceiling = int(lerp(178, 255, ramp_t))
-            master_bri = int(weather_master_target * (morning_ceiling / 255.0))
-            c_bri = morning_ceiling
+            master_bri = int(lerp(18, weather_master_target, ramp_t))
+            c_bri = 255
         elif time_to_sunset < 5400:  
             fade_t = max(0.0, time_to_sunset / 5400.0)
             master_bri = lerp(127, weather_master_target, fade_t)
@@ -238,7 +246,7 @@ def run_sky_engine():
         
         c_sky = get_base_hues(alt, clouds, turbidity)
         c_cloud = [min(255, int(c * 1.8)) for c in c_sky]
-        c_sun = [255, 241, 224]
+        c_sun = get_sun_color(alt)
         
         c_ix = lerp(int(clouds * 2.55), 153, t)
         active_alpha = lerp(255, 0, t)
@@ -294,7 +302,7 @@ def run_sky_engine():
                 "bri": c_bri,
                 "col": [c_sky + [0], c_cloud + [0], c_sun + [0]], 
                 "cct": 127,
-                "sx": target_x, "ix": c_ix, "c1": active_alpha
+                "fx": 142, "sx": target_x, "ix": c_ix, "pal": c_pal, "c1": active_alpha
             },
             {
                 "id": 1, 
@@ -310,13 +318,13 @@ def run_sky_engine():
                 "bri": 255,
                 "col": [[ab_val, ab_val, ab_val, 0], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
-                "fx": 169, "sx": 128, "ix": 128, "pal": 0, "rev": False
+                "fx": 169, "sx": 128, "ix": 128, "pal": 0, "rev": True
             },
             {
                 "id": 3, 
                 "on": bamboo_on,
                 "bri": bamboo_bri,
-                "col": [[200, 200, 200, 200], [0,0,0,0], [0,0,0,0]], 
+                "col": [[126, 126, 126, 126], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
                 "fx": 0, "sx": 128, "ix": 128, "pal": 0, "lc": 2
             },
