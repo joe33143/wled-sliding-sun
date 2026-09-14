@@ -299,7 +299,7 @@ def run_sky_engine():
                 "bri": c_bri,
                 "col": [c_sky + [0], c_cloud + [0], c_sun + [0]], 
                 "cct": 127,
-                "fx": 142, "sx": target_x, "ix": c_ix, "pal": c_pal, "c1": active_alpha
+                "fx": 142, "sx": target_x, "ix": c_ix, "c1": active_alpha
             },
             {
                 "id": 1, 
