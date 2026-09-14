@@ -64,7 +64,6 @@ def get_base_hues(altitude_deg, clouds, turbidity=5.0):
     return [int(max(0, min(255, r))), int(max(0, min(255, g))), int(max(0, min(255, b)))]
 
 def get_sun_color(alt):
-    # Sun is completely off until -2 degrees, then fades from deep red to yellow
     if alt < -2:
         return [0, 0, 0]
     elif alt < 15:
@@ -163,14 +162,14 @@ def run_sky_engine():
         morning_start = now.replace(hour=4, minute=0, second=0)
         t = max(0.0, min(1.0, (now - morning_start).total_seconds() / (sunrise_time - morning_start).total_seconds()))
         
-        # Original startup dimming: peaks at exactly 18/255 at sunrise
         master_bri = lerp(0, 18, t ** 3) 
         c_bri = 255
         target_x = lerp(0, 128, t)
         
         clamped_alt = min(0.0, alt)
         c_sky = get_base_hues(clamped_alt, clouds, turbidity)
-        c_cloud = [min(255, int(c * 1.8)) for c in c_sky] 
+        # FIX: Clouds are now cooler and darker silhouettes against the sun
+        c_cloud = [min(255, int(c * 0.75)) for c in c_sky] 
         c_sun = get_sun_color(alt)
         
         c_ix = int(clouds * 2.55)
@@ -181,10 +180,10 @@ def run_sky_engine():
         target_x = calculate_position(now, sunrise_time, sunset_time)
         
         c_sky = get_base_hues(alt, clouds, turbidity)
-        c_cloud = [min(255, int(c * 1.8)) for c in c_sky]
+        # FIX: Clouds darker
+        c_cloud = [min(255, int(c * 0.75)) for c in c_sky]
         c_sun = get_sun_color(alt)
         
-        # Determine weather-based brightness ceiling
         if is_stormy or clouds > 75:
             active_alpha = int(lerp(100, 0, (clouds - 75)/25.0))
             weather_master_target = 180 if not is_stormy else 130
@@ -195,12 +194,10 @@ def run_sky_engine():
             active_alpha = int(lerp(255, 100, (clouds - 35)/40.0))
             weather_master_target = int(lerp(255, 180, (clouds - 35)/40.0))
             
-        # Apply Time-of-Day Ramps to the Master Brightness
         eight_am = now.replace(hour=8, minute=0, second=0, microsecond=0)
         time_to_sunset = (sunset_time - now).total_seconds()
         
         if now < eight_am:
-            # Smoothly fades from 18 up to the daily weather target between sunrise and 8 AM
             ramp_t = max(0.0, min(1.0, (now - sunrise_time).total_seconds() / (eight_am - sunrise_time).total_seconds()))
             master_bri = int(lerp(18, weather_master_target, ramp_t))
             c_bri = 255
@@ -212,7 +209,6 @@ def run_sky_engine():
             master_bri = weather_master_target
             c_bri = 255
         
-        # Afterburner sweep math
         ab_base = 0
         if 100 <= target_x <= 155:
             ab_base = 255
@@ -230,6 +226,7 @@ def run_sky_engine():
         else:
             ab_val = 0
 
+        # Python-level cutoffs remain, hardware floor removed
         if clouds > 74.5: ab_val = 0  
         if ab_val < 51: ab_val = 0    
         
@@ -245,7 +242,7 @@ def run_sky_engine():
         target_x = lerp(255, 128, t)
         
         c_sky = get_base_hues(alt, clouds, turbidity)
-        c_cloud = [min(255, int(c * 1.8)) for c in c_sky]
+        c_cloud = [min(255, int(c * 0.75)) for c in c_sky]
         c_sun = get_sun_color(alt)
         
         c_ix = lerp(int(clouds * 2.55), 153, t)
@@ -302,7 +299,7 @@ def run_sky_engine():
                 "bri": c_bri,
                 "col": [c_sky + [0], c_cloud + [0], c_sun + [0]], 
                 "cct": 127,
-                "fx": 142, "sx": target_x, "ix": c_ix, "c1": active_alpha
+                "fx": 142, "sx": target_x, "ix": c_ix, "pal": c_pal, "c1": active_alpha
             },
             {
                 "id": 1, 
@@ -318,13 +315,13 @@ def run_sky_engine():
                 "bri": 255,
                 "col": [[ab_val, ab_val, ab_val, 0], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
-                "fx": 169, "sx": 128, "ix": 128, "pal": 0, "rev": True
+                "fx": 169, "sx": 128, "ix": 128, "pal": 0  # FIX: "rev": True removed
             },
             {
                 "id": 3, 
                 "on": bamboo_on,
                 "bri": bamboo_bri,
-                "col": [[200, 200, 200, 200], [0,0,0,0], [0,0,0,0]], 
+                "col": [[126, 126, 126, 126], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
                 "fx": 0, "sx": 128, "ix": 128, "pal": 0, "lc": 2
             },
