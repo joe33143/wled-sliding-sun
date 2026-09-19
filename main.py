@@ -75,6 +75,7 @@ def get_sun_color(alt):
 def run_sky_engine():
     city = LocationInfo("Varanasi", "India", TIMEZONE, LAT, LON)
     now = datetime.datetime.now(pytz.timezone(TIMEZONE))
+    now_time = now.time()
     time_float = now.hour + (now.minute / 60.0) + (now.second / 3600.0)
     
     s_today = sun(city.observer, date=datetime.date.today(), tzinfo=city.timezone)
@@ -137,15 +138,15 @@ def run_sky_engine():
     # ==========================================
     # TIME-BASED PHASE ROUTING 
     # ==========================================
-    if datetime.time(22, 0) <= now.time() or now.time() < datetime.time(4, 0):
+    if datetime.time(22, 0) <= now_time or now_time < datetime.time(4, 0):
         phase = "SLEEP"
-    elif datetime.time(4, 0) <= now.time() < sunrise_time.time():
+    elif datetime.time(4, 0) <= now_time < sunrise_time.time():
         phase = "MORNING_RAMP"
     elif now < sunset_time:
         phase = "DAY"
     elif now <= sunset_time + datetime.timedelta(minutes=30):
         phase = "SUNSET_FADE"
-    elif now.time() < datetime.time(21, 0):
+    elif now_time < datetime.time(21, 0):
         phase = "EVENING_LOCKED"
     else:
         phase = "NIGHT_SKY"
@@ -217,11 +218,11 @@ def run_sky_engine():
         # --- NOON PAR OVERRIDE ---
         if is_noon_blast:
             master_bri = 255
-            c_bri = 90  # Matrix dims to ~35%
+            c_bri = 90  
             active_alpha = 255
             c_ix = 0  
-            ab_r, ab_g, ab_b = 153, 204, 153  # 60%, 80%, 60%
-            seg4_col = [255, 0, 255, 0]       # Solid Magenta
+            ab_r, ab_g, ab_b = 153, 204, 153  
+            seg4_col = [255, 0, 255, 0]       
             seg4_fx = 0
         else:
             ab_base = 0
@@ -297,7 +298,7 @@ def run_sky_engine():
         seg2_on, seg4_on = False, False
 
     # ====================================================
-    # BUILD EXPLICIT 5-SEGMENT PAYLOAD (Mainseg set to 4)
+    # BUILD EXPLICIT 4-SEGMENT PAYLOAD (Mainseg set to 4)
     # ====================================================
     payload = {
         "on": True, 
