@@ -75,7 +75,6 @@ def get_sun_color(alt):
 def run_sky_engine():
     city = LocationInfo("Varanasi", "India", TIMEZONE, LAT, LON)
     now = datetime.datetime.now(pytz.timezone(TIMEZONE))
-    now_time = now.time()
     time_float = now.hour + (now.minute / 60.0) + (now.second / 3600.0)
     
     s_today = sun(city.observer, date=datetime.date.today(), tzinfo=city.timezone)
@@ -138,15 +137,15 @@ def run_sky_engine():
     # ==========================================
     # TIME-BASED PHASE ROUTING 
     # ==========================================
-    if datetime.time(22, 0) <= now_time or now_time < datetime.time(4, 0):
+    if datetime.time(22, 0) <= now.time() or now.time() < datetime.time(4, 0):
         phase = "SLEEP"
-    elif datetime.time(4, 0) <= now_time < sunrise_time.time():
+    elif datetime.time(4, 0) <= now.time() < sunrise_time.time():
         phase = "MORNING_RAMP"
     elif now < sunset_time:
         phase = "DAY"
     elif now <= sunset_time + datetime.timedelta(minutes=30):
         phase = "SUNSET_FADE"
-    elif now_time < datetime.time(21, 0):
+    elif now.time() < datetime.time(21, 0):
         phase = "EVENING_LOCKED"
     else:
         phase = "NIGHT_SKY"
@@ -154,15 +153,16 @@ def run_sky_engine():
     # ==========================================
     # CALCULATE PHASE VALUES
     # ==========================================
-    seg0_on, seg2_on, seg4_on = True, False, True
+    seg0_on, seg2_on, seg4_on = True, False, False
     ab_r, ab_g, ab_b = 0, 0, 0
     seg4_col = [255, 255, 255, 0]
     seg4_fx = 83
+    seg4_bri = 0
     turbidity = 5.0
     
     if phase == "SLEEP":
         master_bri = 116
-        c_bri, target_x, c_ix, active_alpha, c_pal = 0, 0, 0, 0, 0
+        c_bri, target_x, c_ix, active_alpha = 0, 0, 0, 0
         c_sky, c_cloud, c_sun = [0,0,0], [0,0,0], [0,0,0]
         seg0_on, seg2_on, seg4_on = False, False, False
 
@@ -180,8 +180,10 @@ def run_sky_engine():
         c_sun = get_sun_color(alt)
         
         c_ix = int(clouds * 2.55)
-        c_pal = 59
         active_alpha = lerp(0, 255, t)
+        
+        # Filter off until 8 AM
+        seg4_on = False
 
     elif phase == "DAY":
         target_x = calculate_position(now, sunrise_time, sunset_time)
@@ -207,13 +209,18 @@ def run_sky_engine():
             ramp_t = max(0.0, min(1.0, (now - sunrise_time).total_seconds() / (eight_am - sunrise_time).total_seconds()))
             master_bri = int(lerp(18, weather_master_target, ramp_t))
             c_bri = 255
-        elif time_to_sunset < 5400:  
-            fade_t = max(0.0, time_to_sunset / 5400.0)
-            master_bri = lerp(127, weather_master_target, fade_t)
-            c_bri = lerp(173, 255, fade_t)
+            seg4_on = False
+            seg4_bri = 0
         else:
-            master_bri = weather_master_target
-            c_bri = 255
+            seg4_on = True
+            seg4_bri = 255
+            if time_to_sunset < 5400:  
+                fade_t = max(0.0, time_to_sunset / 5400.0)
+                master_bri = lerp(127, weather_master_target, fade_t)
+                c_bri = lerp(173, 255, fade_t)
+            else:
+                master_bri = weather_master_target
+                c_bri = 255
         
         # --- NOON PAR OVERRIDE ---
         if is_noon_blast:
@@ -224,6 +231,7 @@ def run_sky_engine():
             ab_r, ab_g, ab_b = 153, 204, 153  
             seg4_col = [255, 0, 255, 0]       
             seg4_fx = 0
+            seg4_bri = 255
         else:
             ab_base = 0
             if 100 <= target_x <= 155:
@@ -244,7 +252,6 @@ def run_sky_engine():
             if clouds > 74.5: ab_r, ab_g, ab_b = 0, 0, 0
         
         seg2_on = (ab_r > 0 or ab_g > 0 or ab_b > 0)
-        c_pal = 59
         if not is_noon_blast: c_ix = int(clouds * 2.55)
 
     elif phase == "SUNSET_FADE":
@@ -263,10 +270,13 @@ def run_sky_engine():
         c_sun = lerp_color(get_sun_color(alt), [140, 145, 150], t)
         
         c_ix = lerp(int(clouds * 2.55), 153, t)
-        c_pal = 9 
         
         ab_r, ab_g, ab_b = 0, 0, 0
         seg2_on = False
+        
+        # Filter dims progressively with sunset
+        seg4_on = True
+        seg4_bri = lerp(255, 120, t)
 
     elif phase == "EVENING_LOCKED":
         master_bri = 80
@@ -274,13 +284,16 @@ def run_sky_engine():
         target_x = moon_pos
         c_ix = 153  
         active_alpha = moon_alpha
-        c_pal = 9
         
         c_sky = [5, 5, 10]
         c_cloud = [20, 25, 30]
         c_sun = [140, 145, 150]
         
         seg2_on = False
+        
+        # Filter holds dim during evening
+        seg4_on = True
+        seg4_bri = 120
 
     elif phase == "NIGHT_SKY":
         master_bri = int(25.5 + (25.5 * (clouds / 100.0)))
@@ -289,16 +302,16 @@ def run_sky_engine():
         
         target_x = moon_pos
         c_ix = int(clouds * 2.55)
-        c_pal = 0
         
         c_sky = [5, 5, 10]
         c_cloud = [20, 25, 30]
         c_sun = [140, 145, 150] 
         
         seg2_on, seg4_on = False, False
+        seg4_bri = 0
 
     # ====================================================
-    # BUILD EXPLICIT 4-SEGMENT PAYLOAD (Mainseg set to 4)
+    # BUILD EXPLICIT 5-SEGMENT PAYLOAD 
     # ====================================================
     payload = {
         "on": True, 
@@ -328,7 +341,7 @@ def run_sky_engine():
                 "bri": 255,
                 "col": [[ab_r, ab_g, ab_b, 0], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
-                "fx": 169, "sx": 128, "ix": 128, "pal": 0 
+                "fx": 169, "sx": 128, "ix": 128
             },
             {
                 "id": 3, 
@@ -336,21 +349,21 @@ def run_sky_engine():
                 "bri": bamboo_bri,
                 "col": [[200, 200, 200, 200], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
-                "fx": 0, "sx": 128, "ix": 128, "pal": 0, "lc": 2
+                "fx": 0, "sx": 128, "ix": 128, "lc": 2
             },
             {
                 "id": 4, 
                 "on": seg4_on,
-                "bri": 255,
+                "bri": seg4_bri,
                 "col": [seg4_col, [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
-                "fx": seg4_fx, "sx": 128, "ix": 128, "pal": c_pal
+                "fx": seg4_fx, "sx": 128, "ix": 128
             }
         ]
     }
 
     # --- PUSH TO MQTT ---
-    print(f"[{phase}] Time: {now_time} | Alt: {alt:.2f} | Moon Pos: {moon_pos} | Filter Seg4 On: {seg4_on}")
+    print(f"[{phase}] Time: {now.time()} | Alt: {alt:.2f} | Filter Seg4 On: {seg4_on} | Bri: {seg4_bri}")
     
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
