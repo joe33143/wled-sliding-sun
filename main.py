@@ -75,6 +75,7 @@ def get_sun_color(alt):
 def run_sky_engine():
     city = LocationInfo("Varanasi", "India", TIMEZONE, LAT, LON)
     now = datetime.datetime.now(pytz.timezone(TIMEZONE))
+    now_time = now.time()
     time_float = now.hour + (now.minute / 60.0) + (now.second / 3600.0)
     
     s_today = sun(city.observer, date=datetime.date.today(), tzinfo=city.timezone)
@@ -112,6 +113,28 @@ def run_sky_engine():
     is_stormy = "thunder" in summary or "storm" in summary
     is_noon_blast = (11.0 <= time_float < 13.0)
 
+    # --- DYNAMIC CONTRAST MULTIPLIERS ---
+    if is_stormy:
+        sky_mult, cloud_mult = 0.0, 0.6
+        weather_master_target = 130
+        day_active_alpha = 0
+    elif clouds >= 75:
+        sky_mult, cloud_mult = 0.0, 0.8
+        weather_master_target = 200
+        day_active_alpha = int(lerp(100, 0, (clouds - 75)/25.0))
+    elif clouds >= 50:
+        t_c = (clouds - 50) / 25.0
+        sky_mult = 0.4 - (0.4 * t_c)
+        cloud_mult = 0.6 + (0.2 * t_c)
+        weather_master_target = int(lerp(230, 200, t_c))
+        day_active_alpha = int(lerp(200, 100, t_c))
+    else:
+        t_c = clouds / 50.0
+        sky_mult = 0.8 - (0.4 * t_c)
+        cloud_mult = 0.4 + (0.2 * t_c)
+        weather_master_target = int(lerp(255, 230, t_c))
+        day_active_alpha = int(lerp(255, 200, t_c))
+
     # ==========================================
     # INDEPENDENT BAMBOO LIGHT LOGIC
     # ==========================================
@@ -137,15 +160,15 @@ def run_sky_engine():
     # ==========================================
     # TIME-BASED PHASE ROUTING 
     # ==========================================
-    if datetime.time(22, 0) <= now.time() or now.time() < datetime.time(4, 0):
+    if datetime.time(22, 0) <= now_time or now_time < datetime.time(4, 0):
         phase = "SLEEP"
-    elif datetime.time(4, 0) <= now.time() < sunrise_time.time():
+    elif datetime.time(4, 0) <= now_time < sunrise_time.time():
         phase = "MORNING_RAMP"
     elif now < sunset_time:
         phase = "DAY"
     elif now <= sunset_time + datetime.timedelta(minutes=30):
         phase = "SUNSET_FADE"
-    elif now.time() < datetime.time(21, 0):
+    elif now_time < datetime.time(21, 0):
         phase = "EVENING_LOCKED"
     else:
         phase = "NIGHT_SKY"
@@ -175,32 +198,24 @@ def run_sky_engine():
         target_x = lerp(0, 128, t)
         
         clamped_alt = min(0.0, alt)
-        c_sky = get_base_hues(clamped_alt, clouds, turbidity)
-        c_cloud = [min(255, int(c * 0.75)) for c in c_sky] 
+        raw_hues = get_base_hues(clamped_alt, clouds, turbidity)
+        
+        c_sky = [int(c * sky_mult) for c in raw_hues]
+        c_cloud = [int(c * cloud_mult) for c in raw_hues] 
         c_sun = get_sun_color(alt)
         
         c_ix = int(clouds * 2.55)
-        active_alpha = lerp(0, 255, t)
-        
-        # Filter off until 8 AM
+        active_alpha = lerp(0, day_active_alpha, t)
         seg4_on = False
 
     elif phase == "DAY":
         target_x = calculate_position(now, sunrise_time, sunset_time)
+        raw_hues = get_base_hues(alt, clouds, turbidity)
         
-        c_sky = get_base_hues(alt, clouds, turbidity)
-        c_cloud = [min(255, int(c * 0.75)) for c in c_sky]
+        c_sky = [int(c * sky_mult) for c in raw_hues]
+        c_cloud = [int(c * cloud_mult) for c in raw_hues]
         c_sun = get_sun_color(alt)
-        
-        if is_stormy or clouds > 75:
-            active_alpha = int(lerp(100, 0, (clouds - 75)/25.0))
-            weather_master_target = 180 if not is_stormy else 130
-        elif clouds <= 35:
-            active_alpha = 255
-            weather_master_target = 255
-        else:
-            active_alpha = int(lerp(255, 100, (clouds - 35)/40.0))
-            weather_master_target = int(lerp(255, 180, (clouds - 35)/40.0))
+        active_alpha = day_active_alpha
             
         eight_am = now.replace(hour=8, minute=0, second=0, microsecond=0)
         time_to_sunset = (sunset_time - now).total_seconds()
@@ -216,13 +231,13 @@ def run_sky_engine():
             seg4_bri = 255
             if time_to_sunset < 5400:  
                 fade_t = max(0.0, time_to_sunset / 5400.0)
-                master_bri = lerp(127, weather_master_target, fade_t)
-                c_bri = lerp(173, 255, fade_t)
+                master_bri = int(lerp(127, weather_master_target, fade_t))
+                c_bri = int(lerp(173, 255, fade_t))
             else:
                 master_bri = weather_master_target
                 c_bri = 255
         
-        # --- NOON PAR OVERRIDE ---
+        # --- NOON PAR OVERRIDE & AFTERBURNERS ---
         if is_noon_blast:
             master_bri = 255
             c_bri = 90  
@@ -233,23 +248,23 @@ def run_sky_engine():
             seg4_fx = 0
             seg4_bri = 255
         else:
+            ab_peak = 204 - int((min(clouds, 75) / 75.0) * 77)
+            
             ab_base = 0
             if 100 <= target_x <= 155:
-                ab_base = 255
+                ab_base = ab_peak
                 ab_active_alpha = 255
             else:
                 ab_active_alpha = active_alpha
                 if 30 <= target_x < 100:
-                    ab_base = int(((target_x - 30) / 70.0) * 255)
+                    ab_base = int(((target_x - 30) / 70.0) * ab_peak)
                 elif 155 < target_x <= 225:
                     fade = 1.0 - ((target_x - 155) / 70.0)
-                    ab_base = int(255 * fade)
+                    ab_base = int(ab_peak * fade)
                 
-            if now.hour >= 8:
-                ab_val = min(255, max(0, int((ab_base * ab_active_alpha) / 255)))
+            if now >= eight_am:
+                ab_val = int((ab_base * ab_active_alpha) / 255)
                 ab_r, ab_g, ab_b = ab_val, ab_val, ab_val
-            
-            if clouds > 74.5: ab_r, ab_g, ab_b = 0, 0, 0
         
         seg2_on = (ab_r > 0 or ab_g > 0 or ab_b > 0)
         if not is_noon_blast: c_ix = int(clouds * 2.55)
@@ -261,12 +276,12 @@ def run_sky_engine():
         c_bri = lerp(255, 120, t)
         
         target_x = lerp(255, moon_pos, t)
-        active_alpha = lerp(255, moon_alpha, t)
+        active_alpha = lerp(day_active_alpha, moon_alpha, t)
         
-        c_sky = get_base_hues(alt, clouds, turbidity)
+        raw_hues = get_base_hues(alt, clouds, turbidity)
         
-        c_sky = lerp_color(c_sky, [5, 5, 10], t)
-        c_cloud = lerp_color([min(255, int(c * 0.75)) for c in c_sky], [20, 25, 30], t)
+        c_sky = lerp_color([int(c * sky_mult) for c in raw_hues], [5, 5, 10], t)
+        c_cloud = lerp_color([int(c * cloud_mult) for c in raw_hues], [20, 25, 30], t)
         c_sun = lerp_color(get_sun_color(alt), [140, 145, 150], t)
         
         c_ix = lerp(int(clouds * 2.55), 153, t)
@@ -274,7 +289,6 @@ def run_sky_engine():
         ab_r, ab_g, ab_b = 0, 0, 0
         seg2_on = False
         
-        # Filter dims progressively with sunset
         seg4_on = True
         seg4_bri = lerp(255, 120, t)
 
@@ -291,7 +305,6 @@ def run_sky_engine():
         
         seg2_on = False
         
-        # Filter holds dim during evening
         seg4_on = True
         seg4_bri = 120
 
@@ -333,7 +346,7 @@ def run_sky_engine():
                 "bri": 116, 
                 "col": [[0,0,0,0], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
-                "fx": 0, "sx": 166, "ix": 152, "pal": 30 
+                "fx": 0, "sx": 166, "ix": 152
             },
             {
                 "id": 2, 
@@ -363,7 +376,7 @@ def run_sky_engine():
     }
 
     # --- PUSH TO MQTT ---
-    print(f"[{phase}] Time: {now.time()} | Alt: {alt:.2f} | Filter Seg4 On: {seg4_on} | Bri: {seg4_bri}")
+    print(f"[{phase}] Time: {now.time()} | Alt: {alt:.2f} | Clouds: {clouds}% | Sky Mult: {sky_mult:.2f} | Sun Alpha: {active_alpha}")
     
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
