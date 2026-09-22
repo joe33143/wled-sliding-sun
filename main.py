@@ -97,7 +97,6 @@ def run_sky_engine():
     moon_az = math.degrees(moon_ephem.az)
     moon_pos = int(lerp(0, 255, (moon_az - 90) / 180.0))
     moon_pos = max(0, min(255, moon_pos))
-    moon_alpha = int(12.75 + (114.75 * moon_phase)) 
     
     try:
         url = f"https://www.meteosource.com/api/v1/free/point?place_id=varanasi&sections=current&language=en&units=metric&key={METEOSOURCE_API_KEY}"
@@ -160,7 +159,7 @@ def run_sky_engine():
     # ==========================================
     # TIME-BASED PHASE ROUTING 
     # ==========================================
-    if datetime.time(22, 0) <= now_time or now_time < datetime.time(4, 0):
+    if datetime.time(21, 30) <= now_time or now_time < datetime.time(4, 0):
         phase = "SLEEP"
     elif datetime.time(4, 0) <= now_time < sunrise_time.time():
         phase = "MORNING_RAMP"
@@ -168,10 +167,10 @@ def run_sky_engine():
         phase = "DAY"
     elif now <= sunset_time + datetime.timedelta(minutes=30):
         phase = "SUNSET_FADE"
-    elif now_time < datetime.time(21, 0):
+    elif now_time < datetime.time(20, 30):  # Evening hold ends at 8:30 PM
         phase = "EVENING_LOCKED"
-    else:
-        phase = "NIGHT_SKY"
+    else:  # 8:30 PM to 9:30 PM fade out
+        phase = "NIGHT_FADE"
 
     # ==========================================
     # CALCULATE PHASE VALUES
@@ -233,7 +232,7 @@ def run_sky_engine():
             if time_to_sunset < 5400:  
                 fade_t = max(0.0, time_to_sunset / 5400.0)
                 master_bri = int(lerp(150, weather_master_target, fade_t))
-                c_bri = int(lerp(200, 255, fade_t))
+                c_bri = 255
             else:
                 master_bri = weather_master_target
                 c_bri = 255
@@ -274,12 +273,12 @@ def run_sky_engine():
     elif phase == "SUNSET_FADE":
         t = (now - sunset_time).total_seconds() / 1800.0  
         
-        # INCREASED: Master and segment brightness floors raised for visibility
-        master_bri = lerp(255, 150, t)
-        c_bri = lerp(255, 200, t)
+        # Master slides up to 255 while segment dims down to its hold level
+        master_bri = lerp(weather_master_target, 255, t)
+        c_bri = lerp(255, 120, t)
         
         target_x = lerp(255, moon_pos, t)
-        active_alpha = lerp(day_active_alpha, moon_alpha, t)
+        active_alpha = lerp(day_active_alpha, 255, t)  # Fade to max alpha
         
         raw_hues = get_base_hues(alt, clouds, turbidity)
         
@@ -293,15 +292,14 @@ def run_sky_engine():
         seg2_on = False
         
         seg4_on = True
-        seg4_bri = lerp(255, 180, t)
+        seg4_bri = lerp(255, 80, t)
 
     elif phase == "EVENING_LOCKED":
-        # INCREASED: Locks in at the new, higher visibility floor
-        master_bri = 150
-        c_bri = 200
+        master_bri = 255
+        c_bri = 120
         target_x = moon_pos
         c_ix = 153  
-        active_alpha = moon_alpha
+        active_alpha = 255  # Locked to max
         
         c_sky = [5, 5, 10]
         c_cloud = [20, 25, 30]
@@ -310,22 +308,27 @@ def run_sky_engine():
         seg2_on = False
         
         seg4_on = True
-        seg4_bri = 180
-
-    elif phase == "NIGHT_SKY":
-        master_bri = int(25.5 + (25.5 * (clouds / 100.0)))
-        c_bri = 255 
-        active_alpha = moon_alpha
+        seg4_bri = 80
         
+    elif phase == "NIGHT_FADE":
+        fade_start = now.replace(hour=20, minute=30, second=0, microsecond=0)
+        t = (now - fade_start).total_seconds() / 3600.0
+        
+        master_bri = 255
+        # Segments gracefully fade out before bedtime
+        c_bri = lerp(120, 0, t)
         target_x = moon_pos
-        c_ix = int(clouds * 2.55)
+        c_ix = 153
+        active_alpha = 255  # Maintained as max while the segment dims
         
         c_sky = [5, 5, 10]
         c_cloud = [20, 25, 30]
-        c_sun = [140, 145, 150] 
+        c_sun = [140, 145, 150]
         
-        seg2_on, seg4_on = False, False
-        seg4_bri = 0
+        seg2_on = False
+        
+        seg4_on = True
+        seg4_bri = lerp(80, 0, t)
 
     # ====================================================
     # BUILD EXPLICIT 5-SEGMENT PAYLOAD 
@@ -380,7 +383,7 @@ def run_sky_engine():
     }
 
     # --- PUSH TO MQTT ---
-    print(f"[{phase}] Time: {now.time()} | Alt: {alt:.2f} | Clouds: {clouds}% | Sky Mult: {sky_mult:.2f} | Sun Alpha: {active_alpha}")
+    print(f"[{phase}] Time: {now.time()} | Alt: {alt:.2f} | Seg0 Bri: {c_bri} | Alpha: {active_alpha}")
     
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
