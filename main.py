@@ -113,7 +113,7 @@ def run_sky_engine():
     is_stormy = "thunder" in summary or "storm" in summary
     is_noon_blast = (11.0 <= time_float < 13.0)
 
-    # --- DYNAMIC CONTRAST MULTIPLIERS (Adjusted for API drift) ---
+    # --- DYNAMIC CONTRAST MULTIPLIERS ---
     if is_stormy:
         sky_mult, cloud_mult = 0.3, 0.7
         weather_master_target = 130
@@ -178,7 +178,7 @@ def run_sky_engine():
     # ==========================================
     seg0_on, seg2_on, seg4_on = True, False, False
     ab_r, ab_g, ab_b = 0, 0, 0
-    ab_fx = 169  # Default to C++ Custom Effect
+    ab_fx = 169  
     seg4_col = [255, 255, 255, 0]
     seg4_fx = 83
     seg4_bri = 0
@@ -232,8 +232,8 @@ def run_sky_engine():
             seg4_bri = 255
             if time_to_sunset < 5400:  
                 fade_t = max(0.0, time_to_sunset / 5400.0)
-                master_bri = int(lerp(127, weather_master_target, fade_t))
-                c_bri = int(lerp(173, 255, fade_t))
+                master_bri = int(lerp(150, weather_master_target, fade_t))
+                c_bri = int(lerp(200, 255, fade_t))
             else:
                 master_bri = weather_master_target
                 c_bri = 255
@@ -244,12 +244,12 @@ def run_sky_engine():
             active_alpha = 255
             c_ix = 0  
             ab_r, ab_g, ab_b = 153, 204, 153  
-            ab_fx = 0  # Python Fix: Overrides C++ and forces solid color
+            ab_fx = 0  
             seg4_col = [255, 0, 255, 0]       
             seg4_fx = 0
             seg4_bri = 255
         else:
-            ab_fx = 169  # Restore C++ Effect
+            ab_fx = 169  
             ab_peak = 204 - int((min(clouds, 75) / 75.0) * 77)
             
             ab_base = 0
@@ -274,8 +274,9 @@ def run_sky_engine():
     elif phase == "SUNSET_FADE":
         t = (now - sunset_time).total_seconds() / 1800.0  
         
-        master_bri = lerp(255, 80, t)
-        c_bri = lerp(255, 120, t)
+        # INCREASED: Master and segment brightness floors raised for visibility
+        master_bri = lerp(255, 150, t)
+        c_bri = lerp(255, 200, t)
         
         target_x = lerp(255, moon_pos, t)
         active_alpha = lerp(day_active_alpha, moon_alpha, t)
@@ -292,11 +293,12 @@ def run_sky_engine():
         seg2_on = False
         
         seg4_on = True
-        seg4_bri = lerp(255, 120, t)
+        seg4_bri = lerp(255, 180, t)
 
     elif phase == "EVENING_LOCKED":
-        master_bri = 80
-        c_bri = 120
+        # INCREASED: Locks in at the new, higher visibility floor
+        master_bri = 150
+        c_bri = 200
         target_x = moon_pos
         c_ix = 153  
         active_alpha = moon_alpha
@@ -308,7 +310,7 @@ def run_sky_engine():
         seg2_on = False
         
         seg4_on = True
-        seg4_bri = 120
+        seg4_bri = 180
 
     elif phase == "NIGHT_SKY":
         master_bri = int(25.5 + (25.5 * (clouds / 100.0)))
@@ -378,7 +380,7 @@ def run_sky_engine():
     }
 
     # --- PUSH TO MQTT ---
-    print(f"[{phase}] Time: {now.time()} | Alt: {alt:.2f} | Clouds: {clouds}% | AB FX: {ab_fx}")
+    print(f"[{phase}] Time: {now.time()} | Alt: {alt:.2f} | Clouds: {clouds}% | Sky Mult: {sky_mult:.2f} | Sun Alpha: {active_alpha}")
     
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
