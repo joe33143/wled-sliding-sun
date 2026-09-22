@@ -113,27 +113,27 @@ def run_sky_engine():
     is_stormy = "thunder" in summary or "storm" in summary
     is_noon_blast = (11.0 <= time_float < 13.0)
 
-    # --- DYNAMIC CONTRAST MULTIPLIERS ---
+    # --- DYNAMIC CONTRAST MULTIPLIERS (Adjusted for API drift) ---
     if is_stormy:
-        sky_mult, cloud_mult = 0.0, 0.6
+        sky_mult, cloud_mult = 0.3, 0.7
         weather_master_target = 130
         day_active_alpha = 0
     elif clouds >= 75:
-        sky_mult, cloud_mult = 0.0, 0.8
+        sky_mult, cloud_mult = 0.5, 0.8
         weather_master_target = 200
-        day_active_alpha = int(lerp(100, 0, (clouds - 75)/25.0))
+        day_active_alpha = int(lerp(150, 50, (clouds - 75)/25.0))
     elif clouds >= 50:
         t_c = (clouds - 50) / 25.0
-        sky_mult = 0.4 - (0.4 * t_c)
-        cloud_mult = 0.6 + (0.2 * t_c)
+        sky_mult = 0.7 - (0.2 * t_c) 
+        cloud_mult = 0.6 + (0.2 * t_c) 
         weather_master_target = int(lerp(230, 200, t_c))
-        day_active_alpha = int(lerp(200, 100, t_c))
+        day_active_alpha = int(lerp(255, 150, t_c))
     else:
         t_c = clouds / 50.0
-        sky_mult = 0.8 - (0.4 * t_c)
-        cloud_mult = 0.4 + (0.2 * t_c)
+        sky_mult = 1.0 - (0.3 * t_c) 
+        cloud_mult = 0.4 + (0.2 * t_c) 
         weather_master_target = int(lerp(255, 230, t_c))
-        day_active_alpha = int(lerp(255, 200, t_c))
+        day_active_alpha = 255
 
     # ==========================================
     # INDEPENDENT BAMBOO LIGHT LOGIC
@@ -178,6 +178,7 @@ def run_sky_engine():
     # ==========================================
     seg0_on, seg2_on, seg4_on = True, False, False
     ab_r, ab_g, ab_b = 0, 0, 0
+    ab_fx = 169  # Default to C++ Custom Effect
     seg4_col = [255, 255, 255, 0]
     seg4_fx = 83
     seg4_bri = 0
@@ -237,17 +238,18 @@ def run_sky_engine():
                 master_bri = weather_master_target
                 c_bri = 255
         
-        # --- NOON PAR OVERRIDE & AFTERBURNERS ---
         if is_noon_blast:
             master_bri = 255
             c_bri = 90  
             active_alpha = 255
             c_ix = 0  
             ab_r, ab_g, ab_b = 153, 204, 153  
+            ab_fx = 0  # Python Fix: Overrides C++ and forces solid color
             seg4_col = [255, 0, 255, 0]       
             seg4_fx = 0
             seg4_bri = 255
         else:
+            ab_fx = 169  # Restore C++ Effect
             ab_peak = 204 - int((min(clouds, 75) / 75.0) * 77)
             
             ab_base = 0
@@ -354,7 +356,7 @@ def run_sky_engine():
                 "bri": 255,
                 "col": [[ab_r, ab_g, ab_b, 0], [0,0,0,0], [0,0,0,0]], 
                 "cct": 127,  
-                "fx": 169, "sx": 128, "ix": 128
+                "fx": ab_fx, "sx": 128, "ix": 128
             },
             {
                 "id": 3, 
@@ -376,7 +378,7 @@ def run_sky_engine():
     }
 
     # --- PUSH TO MQTT ---
-    print(f"[{phase}] Time: {now.time()} | Alt: {alt:.2f} | Clouds: {clouds}% | Sky Mult: {sky_mult:.2f} | Sun Alpha: {active_alpha}")
+    print(f"[{phase}] Time: {now.time()} | Alt: {alt:.2f} | Clouds: {clouds}% | AB FX: {ab_fx}")
     
     client_id = f"joe33143_sky_{int(time.time())}"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
